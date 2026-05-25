@@ -148,7 +148,7 @@ app.post('/api/generate', async (req, res) => {
       await user.save();
     }
 
-    const deductAmount = cost || 2;
+    const deductAmount = typeof cost === 'number' ? cost : 2;
 
     if (user.credit < deductAmount) {
       return res.status(403).json({ error: 'Insufficient credits. Please upgrade.' });
