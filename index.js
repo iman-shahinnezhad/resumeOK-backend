@@ -284,6 +284,66 @@ app.post('/purchase/verify-apple', async (req, res) => {
   }
 });
 
+
+// 7. Secure AI Image Route (Img2Img)
+app.post('/api/generate-image', async (req, res) => {
+  const { deviceId, uploadUrl, eraPrompt, cost, quality, ratio } = req.body;
+  const authHeader = req.headers.authorization;
+  if (!eraPrompt) return res.status(400).json({ error: 'eraPrompt is required' });
+  if (!uploadUrl) return res.status(400).json({ error: 'uploadUrl is required' });
+
+  try {
+    let user = await User.findOne({ id: deviceId });
+    if (!user) return res.status(401).json({ error: 'User not found' });
+    if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
+
+    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
+
+    // Fetch the image from uploadUrl to get base64
+    const imgRes = await fetch(uploadUrl);
+    const arrayBuffer = await imgRes.arrayBuffer();
+    const imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+
+    const generateRes = await fetch('https://api.segmind.com/v1/sdxl-img2img', {
+      method: 'POST',
+      headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: eraPrompt,
+        image: imageBase64,
+        strength: 0.8,
+        samples: 1,
+        scheduler: "dpmpp_2m",
+        num_inference_steps: 25,
+        guidance_scale: 7.5,
+        base64: true
+      }),
+    });
+
+    if (!generateRes.ok) {
+      const errText = await generateRes.text();
+      throw new Error('API Error: ' + errText);
+    }
+
+    const genData = await generateRes.json();
+    let resultBase64 = '';
+    if (genData.image) resultBase64 = genData.image;
+
+    if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
+
+    user.credit -= (cost || 2);
+    await user.save();
+
+    res.json({
+      success: true,
+      image: `data:image/jpeg;base64,${resultBase64}`,
+      remainingCredits: user.credit
+    });
+  } catch (error) {
+    console.error('Generate Image Error:', error);
+    res.status(500).json({ error: error.message || 'Server Error' });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Production Backend Server running on port ${PORT}`);
 });
