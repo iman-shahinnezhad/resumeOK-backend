@@ -174,7 +174,7 @@ app.post('/api/generate', async (req, res) => {
         thinking_level: "minimal",
         safety_tolerance: 4,
         output_resolution: quality || "1K",
-        response_modalities: "TEXT_AND_IMAGE",
+        response_modalities: "IMAGE",
         base64: true
       }),
     });
