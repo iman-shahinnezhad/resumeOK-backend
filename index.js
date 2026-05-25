@@ -28,16 +28,35 @@ const userSchema = new mongoose.Schema({
   name: { type: String, default: 'Guest User' },
   email: { type: String },
   avatar: { type: String },
-  credit: { type: Number, default: 4 },
+  credit: { type: Number, default: 2 },
   plan: { type: String, default: 'Free' },
   createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', userSchema);
 
-// ----------------------------
+// ----------------------------------------------------
+// NEW GUEST CREDIT ROUTE
+// ----------------------------------------------------
+app.get('/api/guest/:deviceId/credits', async (req, res) => {
+  const { deviceId } = req.params;
+  try {
+    let user = await User.findOne({ id: deviceId });
+    if (!user) {
+      // Create user if they don't exist in Mongo yet
+      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User' });
+      await user.save();
+    }
+    res.json({ success: true, credit: user.credit });
+  } catch (error) {
+    console.error('Failed to get guest credits:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-// ----------------------------
+// ----------------------------------------------------
+// DEDUCT ENDPOINT (Kept for backwards compatibility)
+// ----------------------------------------------------
 
 // 3. User Info / Secure Session validation Route
 app.get('/auth/me', async (req, res) => {
@@ -144,10 +163,7 @@ app.post('/api/generate', async (req, res) => {
     let user = await User.findOne({ id: userId });
 
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 1000, name: 'Guest User' });
-      await user.save();
-    } else if (userId.startsWith('guest_device') && user.credit < 10) {
-      user.credit = 1000;
+      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User' });
       await user.save();
     }
 
@@ -306,7 +322,7 @@ app.post('/api/generate-image', async (req, res) => {
 
     let user = await User.findOne({ id: userId });
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 4, name: 'Guest User' });
+      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User' });
       await user.save();
     }
     if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
