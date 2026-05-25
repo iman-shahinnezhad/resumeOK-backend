@@ -189,7 +189,7 @@ app.post('/api/generate', async (req, res) => {
       else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
     }
 
-    if (!resultBase64) throw new Error('Invalid response from AI server');
+    if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
 
     // ONLY DEDUCT CREDIT IF GENERATION WAS SUCCESSFUL
     user.credit -= deductAmount;
