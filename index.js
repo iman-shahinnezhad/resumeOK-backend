@@ -146,6 +146,9 @@ app.post('/api/generate', async (req, res) => {
     if (!user) {
       user = new User({ id: userId, plan: 'Free', credit: 4, name: 'Guest User' });
       await user.save();
+    } else if (user.credit < 0) {
+      user.credit = 4;
+      await user.save();
     }
 
     const deductAmount = typeof cost === 'number' ? cost : 2;
