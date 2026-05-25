@@ -185,7 +185,7 @@ app.post('/api/generate', async (req, res) => {
     let genData = null;
     let textResponse = '';
     const contentType = generateRes.headers.get('content-type') || '';
-    
+
     if (contentType.includes('application/json')) {
       genData = await generateRes.json();
       if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
@@ -293,8 +293,19 @@ app.post('/api/generate-image', async (req, res) => {
   if (!uploadUrl) return res.status(400).json({ error: 'uploadUrl is required' });
 
   try {
-    let user = await User.findOne({ id: deviceId });
-    if (!user) return res.status(401).json({ error: 'User not found' });
+    let userId = deviceId;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+        userId = decoded.id;
+      } catch (e) { }
+    }
+
+    let user = await User.findOne({ id: userId });
+    if (!user) {
+      user = new User({ id: userId, plan: 'Free', credit: 4, name: 'Guest User' });
+      await user.save();
+    }
     if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
 
     const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
