@@ -182,14 +182,18 @@ app.post('/api/generate', async (req, res) => {
     if (!generateRes.ok) throw new Error('AI Generation failed');
 
     let resultBase64 = '';
+    let genData = null;
+    let textResponse = '';
     const contentType = generateRes.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
-      const genData = await generateRes.json();
+      genData = await generateRes.json();
       if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
       else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
+    } else {
+      textResponse = await generateRes.text();
     }
 
-    if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
+    if (!resultBase64) throw new Error('Invalid response: ' + (genData ? JSON.stringify(genData) : textResponse));
 
     // ONLY DEDUCT CREDIT IF GENERATION WAS SUCCESSFUL
     user.credit -= deductAmount;
