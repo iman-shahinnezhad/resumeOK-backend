@@ -185,10 +185,14 @@ app.post('/api/generate', async (req, res) => {
     let genData = null;
     let textResponse = '';
     const contentType = generateRes.headers.get('content-type') || '';
+    
     if (contentType.includes('application/json')) {
       genData = await generateRes.json();
       if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
       else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
+    } else if (contentType.includes('image')) {
+      const arrayBuffer = await generateRes.arrayBuffer();
+      resultBase64 = Buffer.from(arrayBuffer).toString('base64');
     } else {
       textResponse = await generateRes.text();
     }
