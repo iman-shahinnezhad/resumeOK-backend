@@ -144,10 +144,10 @@ app.post('/api/generate', async (req, res) => {
     let user = await User.findOne({ id: userId });
 
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 4, name: 'Guest User' });
+      user = new User({ id: userId, plan: 'Free', credit: 1000, name: 'Guest User' });
       await user.save();
-    } else if (user.credit < 0) {
-      user.credit = 4;
+    } else if (userId.startsWith('guest_device') && user.credit < 10) {
+      user.credit = 1000;
       await user.save();
     }
 
