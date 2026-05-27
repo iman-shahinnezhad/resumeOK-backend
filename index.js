@@ -3,6 +3,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -30,8 +31,15 @@ const userSchema = new mongoose.Schema({
   avatar: { type: String },
   credit: { type: Number, default: 2 },
   plan: { type: String, default: 'Free' },
+  referralCode: { type: String, unique: true, sparse: true },
+  referredBy: { type: String, index: true },
+  referralLevel: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 });
+
+const generateReferralCode = () => {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+};
 
 const User = mongoose.model('User', userSchema);
 
@@ -44,12 +52,116 @@ app.get('/api/guest/:deviceId/credits', async (req, res) => {
     let user = await User.findOne({ id: deviceId });
     if (!user) {
       // Create user if they don't exist in Mongo yet
-      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User' });
+      user = new User({
+        id: deviceId,
+        plan: 'Free',
+        credit: 2,
+        name: 'Guest User',
+        referralCode: generateReferralCode()
+      });
       await user.save();
     }
     res.json({ success: true, credit: user.credit });
   } catch (error) {
     console.error('Failed to get guest credits:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ----------------------------------------------------
+// REFERRAL ENDPOINTS
+// ----------------------------------------------------
+
+// Submit a referral code
+app.post('/api/guest/:deviceId/referral', async (req, res) => {
+  const { deviceId } = req.params;
+  const { referralCode } = req.body;
+
+  try {
+    if (!referralCode) return res.status(400).json({ error: 'Referral code required' });
+
+    let user = await User.findOne({ id: deviceId });
+    if (!user) {
+      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      await user.save();
+    }
+
+    if (user.referredBy) {
+      return res.status(400).json({ error: 'You have already used a referral code' });
+    }
+
+    const codeUpper = referralCode.toUpperCase();
+    if (user.referralCode === codeUpper) {
+      return res.status(400).json({ error: 'You cannot use your own referral code' });
+    }
+
+    const referrer = await User.findOne({ referralCode: codeUpper });
+    if (!referrer) {
+      return res.status(404).json({ error: 'Referral code not found' });
+    }
+
+    user.referredBy = codeUpper;
+    await user.save();
+
+    res.json({ success: true, message: 'Referral applied successfully' });
+  } catch (error) {
+    console.error('Referral Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get referral stats
+app.get('/api/guest/:deviceId/referral-stats', async (req, res) => {
+  const { deviceId } = req.params;
+
+  try {
+    let user = await User.findOne({ id: deviceId });
+    if (!user) {
+      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      await user.save();
+    }
+
+    const totalJoined = await User.countDocuments({ referredBy: user.referralCode });
+
+    res.json({
+      success: true,
+      referralCode: user.referralCode,
+      totalJoined,
+      referralLevel: user.referralLevel || 0
+    });
+  } catch (error) {
+    console.error('Referral Stats Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Redeem referral rewards
+app.post('/api/guest/:deviceId/redeem', async (req, res) => {
+  const { deviceId } = req.params;
+
+  try {
+    let user = await User.findOne({ id: deviceId });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const totalJoined = await User.countDocuments({ referredBy: user.referralCode });
+    const currentLevel = user.referralLevel || 0;
+
+    if (currentLevel === 0 && totalJoined >= 3) {
+      user.credit += 50;
+      user.referralLevel = 1;
+      await user.save();
+      return res.json({ success: true, message: 'Level 1 reward claimed', credits: user.credit });
+    }
+    else if (currentLevel === 1 && totalJoined >= 8) { // 3 + 5 = 8
+      user.credit += 50;
+      user.referralLevel = 2;
+      await user.save();
+      return res.json({ success: true, message: 'Level 2 reward claimed', credits: user.credit });
+    }
+
+    res.status(400).json({ error: 'Not eligible for any rewards yet, or already redeemed.' });
+  } catch (error) {
+    console.error('Redeem Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -162,8 +274,10 @@ app.post('/api/generate', async (req, res) => {
   try {
     let user = await User.findOne({ id: userId });
 
+
+
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User' });
+      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
 
@@ -285,7 +399,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
     if (creditsToAdd > 0) {
       let user = await User.findOne({ id: userId });
       if (!user) {
-        user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User' });
+        user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
       }
 
       user.credit += creditsToAdd;
@@ -322,7 +436,7 @@ app.post('/api/generate-image', async (req, res) => {
 
     let user = await User.findOne({ id: userId });
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User' });
+      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
     if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
