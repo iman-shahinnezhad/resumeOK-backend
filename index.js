@@ -253,6 +253,43 @@ app.post('/api/upload', async (req, res) => {
   }
 });
 
+// 5b. Secure Raw Binary Upload Route (Avoids base64 memory crash on client)
+app.post('/api/upload-binary', express.raw({ type: 'image/*', limit: '15mb' }), async (req, res) => {
+  try {
+    const imageBuffer = req.body;
+    if (!imageBuffer || imageBuffer.length === 0) {
+      return res.status(400).json({ error: 'Image raw binary content is required' });
+    }
+
+    const imageBase64 = imageBuffer.toString('base64');
+    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
+    if (!SEGMIND_API_KEY) return res.status(500).json({ error: 'Segmind key missing' });
+
+    const uploadRes = await fetch('https://workflows-api.segmind.com/upload-asset', {
+      method: 'POST',
+      headers: {
+        'x-api-key': SEGMIND_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ data_urls: [`data:image/jpeg;base64,${imageBase64}`] }),
+    });
+
+    if (!uploadRes.ok) throw new Error('Failed to upload image to AI server');
+    const uploadData = await uploadRes.json();
+
+    let uploadUrl = '';
+    if (Array.isArray(uploadData) && uploadData.length > 0) uploadUrl = uploadData[0];
+    else if (uploadData.file_urls && uploadData.file_urls.length > 0) uploadUrl = uploadData.file_urls[0];
+
+    if (!uploadUrl) throw new Error('No upload URL returned');
+
+    res.json({ success: true, uploadUrl });
+  } catch (error) {
+    console.error('Binary Upload Error:', error.message);
+    res.status(500).json({ error: error.message || 'Server Error' });
+  }
+});
+
 // 6. Secure AI Generation Route (Segmind Proxy - Generate Only)
 app.post('/api/generate', async (req, res) => {
   const { deviceId, uploadUrl, eraPrompt, cost, quality, ratio } = req.body;
