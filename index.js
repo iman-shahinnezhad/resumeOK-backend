@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, default: 'Guest User' },
   email: { type: String },
   avatar: { type: String },
-  credit: { type: Number, default: 2 },
+  credit: { type: Number, default: 0 },
   plan: { type: String, default: 'Free' },
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: String, index: true },
@@ -56,7 +56,7 @@ app.get('/api/guest/:deviceId/credits', async (req, res) => {
       user = new User({
         id: deviceId,
         plan: 'Free',
-        credit: 2,
+        credit: 0,
         name: 'Guest User',
         referralCode: generateReferralCode()
       });
@@ -83,7 +83,7 @@ app.post('/api/guest/:deviceId/referral', async (req, res) => {
 
     let user = await User.findOne({ id: deviceId });
     if (!user) {
-      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      user = new User({ id: deviceId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
 
@@ -122,7 +122,7 @@ app.get('/api/guest/:deviceId/referral-stats', async (req, res) => {
   try {
     let user = await User.findOne({ id: deviceId });
     if (!user) {
-      user = new User({ id: deviceId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      user = new User({ id: deviceId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
 
@@ -323,7 +323,7 @@ app.post('/api/generate', async (req, res) => {
 
 
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
 
@@ -445,7 +445,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
     if (creditsToAdd > 0) {
       let user = await User.findOne({ id: userId });
       if (!user) {
-        user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+        user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       }
 
       user.credit += creditsToAdd;
@@ -482,7 +482,7 @@ app.post('/api/generate-image', async (req, res) => {
 
     let user = await User.findOne({ id: userId });
     if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 2, name: 'Guest User', referralCode: generateReferralCode() });
+      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
     if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
