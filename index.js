@@ -464,12 +464,11 @@ app.post('/purchase/verify-apple', async (req, res) => {
 });
 
 
-// 7. Secure AI Image Route (Img2Img)
+// 7. Secure AI Image Route (Img2Img or Text2Img)
 app.post('/api/generate-image', async (req, res) => {
   const { deviceId, uploadUrl, eraPrompt, cost, quality, ratio } = req.body;
   const authHeader = req.headers.authorization;
   if (!eraPrompt) return res.status(400).json({ error: 'eraPrompt is required' });
-  if (!uploadUrl) return res.status(400).json({ error: 'uploadUrl is required' });
 
   try {
     let userId = deviceId;
@@ -488,37 +487,75 @@ app.post('/api/generate-image', async (req, res) => {
     if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
 
     const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
-
-    // Fetch the image from uploadUrl to get base64
-    const imgRes = await fetch(uploadUrl);
-    const arrayBuffer = await imgRes.arrayBuffer();
-    const imageBase64 = Buffer.from(arrayBuffer).toString('base64');
-
-    const generateRes = await fetch('https://api.segmind.com/v1/sdxl-img2img', {
-      method: 'POST',
-      headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: eraPrompt,
-        image: imageBase64,
-        strength: 0.8,
-        samples: 1,
-        scheduler: "dpmpp_2m",
-        num_inference_steps: 25,
-        guidance_scale: 7.5,
-        base64: true
-      }),
-    });
-
-    if (!generateRes.ok) {
-      const errText = await generateRes.text();
-      throw new Error('API Error: ' + errText);
-    }
-
-    const genData = await generateRes.json();
     let resultBase64 = '';
-    if (genData.image) resultBase64 = genData.image;
 
-    if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
+    if (uploadUrl && uploadUrl.trim().length > 0) {
+      // Image to Image via sdxl-img2img
+      const imgRes = await fetch(uploadUrl);
+      const arrayBuffer = await imgRes.arrayBuffer();
+      const imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+
+      const generateRes = await fetch('https://api.segmind.com/v1/sdxl-img2img', {
+        method: 'POST',
+        headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: eraPrompt,
+          image: imageBase64,
+          strength: 0.8,
+          samples: 1,
+          scheduler: "dpmpp_2m",
+          num_inference_steps: 25,
+          guidance_scale: 7.5,
+          base64: true
+        }),
+      });
+
+      if (!generateRes.ok) {
+        const errText = await generateRes.text();
+        throw new Error('API Error: ' + errText);
+      }
+
+      const genData = await generateRes.json();
+      if (genData.image) resultBase64 = genData.image;
+      if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
+    } else {
+      // Text to Image via nano-banana-2
+      const generateRes = await fetch('https://api.segmind.com/v1/nano-banana-2', {
+        method: 'POST',
+        headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed: Math.floor(Math.random() * 1000000),
+          prompt: eraPrompt,
+          web_search: false,
+          aspect_ratio: ratio || "1:1",
+          output_format: "jpg",
+          thinking_level: "minimal",
+          safety_tolerance: 4,
+          output_resolution: quality || "1K",
+          response_modalities: "IMAGE",
+          base64: true
+        }),
+      });
+
+      if (!generateRes.ok) {
+        const errText = await generateRes.text();
+        throw new Error('API Error: ' + errText);
+      }
+
+      let genData = null;
+      const contentType = generateRes.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        genData = await generateRes.json();
+        if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
+        else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
+      } else if (contentType.includes('image')) {
+        const arrayBuffer = await generateRes.arrayBuffer();
+        resultBase64 = Buffer.from(arrayBuffer).toString('base64');
+      }
+
+      if (!resultBase64) throw new Error('Invalid response: ' + (genData ? JSON.stringify(genData) : 'Empty response'));
+    }
 
     user.credit -= (cost || 2);
     await user.save();
