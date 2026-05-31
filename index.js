@@ -34,6 +34,7 @@ const userSchema = new mongoose.Schema({
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: String, index: true },
   referralLevel: { type: Number, default: 0 },
+  totalJoined: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -103,6 +104,10 @@ app.post('/api/guest/:deviceId/referral', async (req, res) => {
     user.referredBy = codeUpper;
     await user.save();
 
+    // Increment referrer's totalJoined count and save
+    referrer.totalJoined = (referrer.totalJoined || 0) + 1;
+    await referrer.save();
+
     res.json({ success: true, message: 'Referral applied successfully' });
   } catch (error) {
     console.error('Referral Error:', error);
@@ -122,6 +127,10 @@ app.get('/api/guest/:deviceId/referral-stats', async (req, res) => {
     }
 
     const totalJoined = await User.countDocuments({ referredBy: user.referralCode });
+    if (user.totalJoined !== totalJoined) {
+      user.totalJoined = totalJoined;
+      await user.save();
+    }
 
     res.json({
       success: true,
