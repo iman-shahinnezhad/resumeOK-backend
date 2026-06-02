@@ -225,6 +225,88 @@ app.post('/auth/deduct', async (req, res) => {
   }
 });
 
+// 4b. Deduct credits for both guest and authenticated users
+app.post('/api/credits/deduct', async (req, res) => {
+  const { deviceId, amount } = req.body;
+  const authHeader = req.headers.authorization;
+
+  let userId = deviceId; // Guest fallback
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid Token' });
+    }
+  }
+
+  if (!userId) return res.status(400).json({ error: 'Missing user identification' });
+  const deductAmount = Number(amount) || 0;
+
+  try {
+    let user = await User.findOne({ id: userId });
+    if (!user) {
+      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
+      await user.save();
+    }
+
+    if (user.credit < deductAmount) {
+      return res.status(403).json({ error: 'Insufficient credits' });
+    }
+
+    user.credit -= deductAmount;
+    await user.save();
+
+    res.json({
+      success: true,
+      credit: user.credit,
+      user
+    });
+  } catch (error) {
+    console.error('Deduct credits error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 4c. Refund credits for both guest and authenticated users
+app.post('/api/credits/refund', async (req, res) => {
+  const { deviceId, amount } = req.body;
+  const authHeader = req.headers.authorization;
+
+  let userId = deviceId; // Guest fallback
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      userId = decoded.id;
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid Token' });
+    }
+  }
+
+  if (!userId) return res.status(400).json({ error: 'Missing user identification' });
+  const refundAmount = Number(amount) || 0;
+
+  try {
+    let user = await User.findOne({ id: userId });
+    if (!user) {
+      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
+      await user.save();
+    }
+
+    user.credit += refundAmount;
+    await user.save();
+
+    res.json({
+      success: true,
+      credit: user.credit,
+      user
+    });
+  } catch (error) {
+    console.error('Refund credits error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // 5. Secure Upload Route (Segmind Proxy - Upload Only)
 app.post('/api/upload', async (req, res) => {
   const { imageBase64 } = req.body;
@@ -484,7 +566,8 @@ app.post('/api/generate-image', async (req, res) => {
       user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
     }
-    if (user.credit < (cost || 2)) return res.status(403).json({ error: 'Insufficient credits' });
+    const deductAmount = typeof cost === 'number' ? cost : 2;
+    if (user.credit < deductAmount) return res.status(403).json({ error: 'Insufficient credits' });
 
     const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
     let resultBase64 = '';
@@ -557,7 +640,7 @@ app.post('/api/generate-image', async (req, res) => {
       if (!resultBase64) throw new Error('Invalid response: ' + (genData ? JSON.stringify(genData) : 'Empty response'));
     }
 
-    user.credit -= (cost || 2);
+    user.credit -= deductAmount;
     await user.save();
 
     res.json({
