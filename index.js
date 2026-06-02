@@ -44,6 +44,11 @@ const generateReferralCode = () => {
 
 const User = mongoose.model('User', userSchema);
 
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, status: 'ok' });
+});
+
 // ----------------------------------------------------
 // NEW GUEST CREDIT ROUTE
 // ----------------------------------------------------
