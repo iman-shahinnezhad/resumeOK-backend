@@ -490,6 +490,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
     } catch (e) { }
   }
 
+
   if (!userId) return res.status(400).json({ error: 'Missing user identification' });
 
   try {
