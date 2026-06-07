@@ -500,11 +500,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'Missing user identification' });
 
   try {
-    const appleUrl = process.env.NODE_ENV === 'production'
-      ? 'https://buy.itunes.apple.com/verifyReceipt'
-      : 'https://sandbox.itunes.apple.com/verifyReceipt';
-
-    const appleResponse = await fetch(appleUrl, {
+    console.log("StoreKit receipt received. Verifying with Apple Production server...");
+    let appleResponse = await fetch('https://buy.itunes.apple.com/verifyReceipt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -512,11 +509,25 @@ app.post('/purchase/verify-apple', async (req, res) => {
         'password': process.env.APPLE_SHARED_SECRET
       })
     });
-    const appleData = await appleResponse.json();
+    let appleData = await appleResponse.json();
+
+    // Auto-fallback: If Production returns 21007, it's a Sandbox receipt. Re-verify with Sandbox server.
+    if (appleData.status === 21007) {
+      console.log("Sandbox receipt detected (status 21007). Retrying with Apple Sandbox server...");
+      appleResponse = await fetch('https://sandbox.itunes.apple.com/verifyReceipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          'receipt-data': receiptData,
+          'password': process.env.APPLE_SHARED_SECRET
+        })
+      });
+      appleData = await appleResponse.json();
+    }
 
     if (appleData.status !== 0) {
-      console.error("Apple Verification Failed:", appleData.status);
-      return res.status(400).json({ error: 'Invalid Apple Receipt' });
+      console.error("Apple Verification Failed. Status code:", appleData.status);
+      return res.status(400).json({ error: `Invalid Apple Receipt (Status ${appleData.status})` });
     }
 
     const latestReceipts = appleData.latest_receipt_info || appleData.receipt.in_app || [];
