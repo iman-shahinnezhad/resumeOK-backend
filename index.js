@@ -502,6 +502,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
   try {
     console.log("---------------- APPLE PURCHASE VERIFICATION START ----------------");
     console.log("StoreKit receipt received. Length:", receiptData ? receiptData.length : 0);
+    console.log("Receipt Data Preview (First 100 chars):", receiptData ? receiptData.substring(0, 100) : "empty");
+    console.log("Receipt Data Preview (Last 100 chars):", receiptData && receiptData.length > 100 ? receiptData.substring(receiptData.length - 100) : "empty");
     
     const appleSecret = process.env.APPLE_SHARED_SECRET;
     const hasSecret = appleSecret && appleSecret !== 'your_apple_shared_secret_here' && !appleSecret.startsWith('your_apple_shared_secret');
