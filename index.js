@@ -508,8 +508,11 @@ app.post('/purchase/verify-apple', async (req, res) => {
     
     console.log("Has Apple Shared Secret configured:", hasSecret ? "Yes (Secret omitted for privacy)" : "No");
 
+    // Clean receipt data of any whitespace, newlines, or carriage returns
+    const cleanedReceipt = receiptData ? receiptData.replace(/\s+/g, '') : '';
+
     const requestBody = {
-      'receipt-data': receiptData
+      'receipt-data': cleanedReceipt
     };
     if (hasSecret) {
       requestBody.password = appleSecret;
@@ -529,7 +532,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
     if (appleData.status === 21007) {
       console.log("--> FALLBACK: Sandbox receipt detected (status 21007). Retrying with Apple Sandbox server...");
       let sandboxRequestBody = {
-        'receipt-data': receiptData
+        'receipt-data': cleanedReceipt
       };
       if (hasSecret) {
         sandboxRequestBody.password = appleSecret;
