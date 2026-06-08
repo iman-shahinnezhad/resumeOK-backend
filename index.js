@@ -501,26 +501,37 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
   try {
     console.log("StoreKit receipt received. Verifying with Apple Production server...");
+    const appleSecret = process.env.APPLE_SHARED_SECRET;
+    const hasSecret = appleSecret && appleSecret !== 'your_apple_shared_secret_here' && !appleSecret.startsWith('your_apple_shared_secret');
+    
+    const requestBody = {
+      'receipt-data': receiptData
+    };
+    if (hasSecret) {
+      requestBody.password = appleSecret;
+    }
+
     let appleResponse = await fetch('https://buy.itunes.apple.com/verifyReceipt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        'receipt-data': receiptData,
-        'password': process.env.APPLE_SHARED_SECRET
-      })
+      body: JSON.stringify(requestBody)
     });
     let appleData = await appleResponse.json();
 
     // Auto-fallback: If Production returns 21007, it's a Sandbox receipt. Re-verify with Sandbox server.
     if (appleData.status === 21007) {
       console.log("Sandbox receipt detected (status 21007). Retrying with Apple Sandbox server...");
+      let sandboxRequestBody = {
+        'receipt-data': receiptData
+      };
+      if (hasSecret) {
+        sandboxRequestBody.password = appleSecret;
+      }
+
       appleResponse = await fetch('https://sandbox.itunes.apple.com/verifyReceipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          'receipt-data': receiptData,
-          'password': process.env.APPLE_SHARED_SECRET
-        })
+        body: JSON.stringify(sandboxRequestBody)
       });
       appleData = await appleResponse.json();
     }
