@@ -504,11 +504,58 @@ app.post('/purchase/verify-apple', async (req, res) => {
     console.log("StoreKit receipt received. Length:", receiptData ? receiptData.length : 0);
     console.log("Receipt Data Preview (First 100 chars):", receiptData ? receiptData.substring(0, 100) : "empty");
     console.log("Receipt Data Preview (Last 100 chars):", receiptData && receiptData.length > 100 ? receiptData.substring(receiptData.length - 100) : "empty");
-    
+
     const appleSecret = process.env.APPLE_SHARED_SECRET;
     const hasSecret = appleSecret && appleSecret !== 'your_apple_shared_secret_here' && !appleSecret.startsWith('your_apple_shared_secret');
-    
+
     console.log("Has Apple Shared Secret configured:", hasSecret ? "Yes (Secret omitted for privacy)" : "No");
+
+    // Check if the receiptData is a JWS transaction token (starts with eyJ)
+    if (receiptData && receiptData.startsWith('eyJ')) {
+
+      console.log("--> JWSs Token detected (StoreKit 2). Decoding transaction locally...");
+      try {
+        const parts = receiptData.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+          console.log("Decoded JWS Transaction Payload:", payload);
+
+          const productId = payload.productId;
+          const transactionId = payload.transactionId;
+
+          if (!productId) {
+            console.error("Missing productId in JWS transaction payload:", payload);
+            return res.status(400).json({ error: 'Invalid JWS transaction payload: missing productId' });
+          }
+
+          let creditsToAdd = 0;
+          let newPlan = null;
+          if (productId === 'com.relook.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
+          else if (productId === 'com.relook.max') { creditsToAdd = 100; newPlan = 'Max'; }
+
+          if (creditsToAdd > 0) {
+            let user = await User.findOne({ id: userId });
+            if (!user) {
+              user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
+            }
+            user.credit += creditsToAdd;
+            if (newPlan) user.plan = newPlan;
+            await user.save();
+
+            console.log(`Apple StoreKit 2: Granted ${creditsToAdd} credits to ${userId} via JWS decoding`);
+            console.log("---------------- APPLE PURCHASE VERIFICATION END ----------------");
+            return res.json({ success: true, user });
+          } else {
+            console.error("Unknown product ID in JWS transaction:", productId);
+            return res.status(400).json({ error: 'Unknown product ID in JWS transaction' });
+          }
+        } else {
+          console.error("JWS token does not have 3 parts:", receiptData);
+        }
+      } catch (err) {
+        console.error("Failed to parse JWS Token:", err);
+      }
+    }
 
     // Clean receipt data of any whitespace, newlines, or carriage returns
     const cleanedReceipt = receiptData ? receiptData.replace(/\s+/g, '') : '';
@@ -527,7 +574,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
       body: JSON.stringify(requestBody)
     });
     let appleData = await appleResponse.json();
-    
+
     console.log("Production response status:", appleData.status);
 
     // Auto-fallback: If Production returns 21007, it's a Sandbox receipt. Re-verify with Sandbox server.
@@ -559,7 +606,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
     if (appleData.status !== 0) {
       console.error("Apple Verification Failed. Status code:", appleData.status);
       console.log("---------------- APPLE PURCHASE VERIFICATION END ----------------");
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: `Invalid Apple Receipt (Status ${appleData.status}). Environment: ${appleData.environment || 'unknown'}`
       });
     }
