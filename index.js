@@ -500,10 +500,14 @@ app.post('/purchase/verify-apple', async (req, res) => {
   if (!userId) return res.status(400).json({ error: 'Missing user identification' });
 
   try {
-    console.log("StoreKit receipt received. Verifying with Apple Production server...");
+    console.log("---------------- APPLE PURCHASE VERIFICATION START ----------------");
+    console.log("StoreKit receipt received. Length:", receiptData ? receiptData.length : 0);
+    
     const appleSecret = process.env.APPLE_SHARED_SECRET;
     const hasSecret = appleSecret && appleSecret !== 'your_apple_shared_secret_here' && !appleSecret.startsWith('your_apple_shared_secret');
     
+    console.log("Has Apple Shared Secret configured:", hasSecret ? "Yes (Secret omitted for privacy)" : "No");
+
     const requestBody = {
       'receipt-data': receiptData
     };
@@ -511,16 +515,19 @@ app.post('/purchase/verify-apple', async (req, res) => {
       requestBody.password = appleSecret;
     }
 
+    console.log("Sending verification request to Apple Production server...");
     let appleResponse = await fetch('https://buy.itunes.apple.com/verifyReceipt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
     });
     let appleData = await appleResponse.json();
+    
+    console.log("Production response status:", appleData.status);
 
     // Auto-fallback: If Production returns 21007, it's a Sandbox receipt. Re-verify with Sandbox server.
     if (appleData.status === 21007) {
-      console.log("Sandbox receipt detected (status 21007). Retrying with Apple Sandbox server...");
+      console.log("--> FALLBACK: Sandbox receipt detected (status 21007). Retrying with Apple Sandbox server...");
       let sandboxRequestBody = {
         'receipt-data': receiptData
       };
@@ -534,17 +541,40 @@ app.post('/purchase/verify-apple', async (req, res) => {
         body: JSON.stringify(sandboxRequestBody)
       });
       appleData = await appleResponse.json();
+      console.log("Sandbox response status:", appleData.status);
     }
+
+    console.log("Final Apple response properties:", {
+      status: appleData.status,
+      environment: appleData.environment,
+      hasReceipt: !!appleData.receipt,
+      receiptType: appleData.receipt ? appleData.receipt.receipt_type : 'N/A'
+    });
 
     if (appleData.status !== 0) {
       console.error("Apple Verification Failed. Status code:", appleData.status);
-      return res.status(400).json({ error: `Invalid Apple Receipt (Status ${appleData.status})` });
+      console.log("---------------- APPLE PURCHASE VERIFICATION END ----------------");
+      return res.status(400).json({ 
+        error: `Invalid Apple Receipt (Status ${appleData.status}). Environment: ${appleData.environment || 'unknown'}`
+      });
     }
 
-    const latestReceipts = appleData.latest_receipt_info || appleData.receipt.in_app || [];
-    if (latestReceipts.length === 0) return res.status(400).json({ error: 'No purchases found' });
+    const latestReceipts = appleData.latest_receipt_info || (appleData.receipt && appleData.receipt.in_app) || [];
+    console.log("Number of transactions in receipt:", latestReceipts.length);
+
+    if (latestReceipts.length === 0) {
+      console.error("No purchases found in appleData receipt info.");
+      console.log("---------------- APPLE PURCHASE VERIFICATION END ----------------");
+      return res.status(400).json({ error: 'No purchase transactions found in this receipt' });
+    }
 
     const purchasedItem = latestReceipts[latestReceipts.length - 1];
+    console.log("Latest transaction item:", {
+      product_id: purchasedItem.product_id,
+      transaction_id: purchasedItem.transaction_id,
+      purchase_date: purchasedItem.purchase_date,
+      original_purchase_date: purchasedItem.original_purchase_date
+    });
     const productId = purchasedItem.product_id;
 
     let creditsToAdd = 0;
