@@ -530,7 +530,9 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
           let creditsToAdd = 0;
           let newPlan = null;
-          if (productId === 'com.resumeok.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
+          if (productId === 'com.resumeok.basic') { creditsToAdd = 100; newPlan = 'Basic'; }
+          else if (productId === 'com.resumeok.pro') { creditsToAdd = 200; newPlan = 'Pro'; }
+          else if (productId === 'com.resumeok.ultimate') { creditsToAdd = 500; newPlan = 'Ultimate'; }
           else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
           if (creditsToAdd > 0) {
@@ -639,7 +641,9 @@ app.post('/purchase/verify-apple', async (req, res) => {
     let creditsToAdd = 0;
     let newPlan = null;
 
-    if (productId === 'com.resumeok.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
+    if (productId === 'com.resumeok.basic') { creditsToAdd = 100; newPlan = 'Basic'; }
+    else if (productId === 'com.resumeok.pro') { creditsToAdd = 200; newPlan = 'Pro'; }
+    else if (productId === 'com.resumeok.ultimate') { creditsToAdd = 500; newPlan = 'Ultimate'; }
     else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
     if (creditsToAdd > 0) {
