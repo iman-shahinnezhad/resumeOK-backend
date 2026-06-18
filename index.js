@@ -530,8 +530,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
           let creditsToAdd = 0;
           let newPlan = null;
-          if (productId === 'com.relook.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
-          else if (productId === 'com.relook.max') { creditsToAdd = 100; newPlan = 'Max'; }
+          if (productId === 'com.resumeok.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
+          else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
           if (creditsToAdd > 0) {
             let user = await User.findOne({ id: userId });
@@ -620,7 +620,14 @@ app.post('/purchase/verify-apple', async (req, res) => {
       return res.status(400).json({ error: 'No purchase transactions found in this receipt' });
     }
 
-    const purchasedItem = latestReceipts[latestReceipts.length - 1];
+    // Sort transactions by purchase date descending to ensure the first item is the newest
+    latestReceipts.sort((a, b) => {
+      const timeA = parseInt(a.purchase_date_ms || 0, 10);
+      const timeB = parseInt(b.purchase_date_ms || 0, 10);
+      return timeB - timeA;
+    });
+
+    const purchasedItem = latestReceipts[0];
     console.log("Latest transaction item:", {
       product_id: purchasedItem.product_id,
       transaction_id: purchasedItem.transaction_id,
@@ -632,8 +639,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
     let creditsToAdd = 0;
     let newPlan = null;
 
-    if (productId === 'com.relook.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
-    else if (productId === 'com.relook.max') { creditsToAdd = 100; newPlan = 'Max'; }
+    if (productId === 'com.resumeok.pro') { creditsToAdd = 50; newPlan = 'Pro'; }
+    else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
     if (creditsToAdd > 0) {
       let user = await User.findOne({ id: userId });

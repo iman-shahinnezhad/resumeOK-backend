@@ -1,7 +1,7 @@
 {
-  "name": "relook-backend",
+  "name": "resumeok-backend",
   "version": "1.0.0",
-  "description": "Secure Node.js backend for ReLook social authentication",
+  "description": "Secure Node.js backend for ResumeOK social authentication",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
