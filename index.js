@@ -221,7 +221,7 @@ app.post('/api/auth/register', async (req, res) => {
       email,
       password: hashedPassword,
       plan: 'Free',
-      credit: 50, // 50 Welcome credits!
+      credit: 20, // 20 Welcome credits!
       referralCode: generateReferralCode()
     });
 
@@ -278,7 +278,7 @@ app.post('/api/auth/google', async (req, res) => {
         googleId: googleId,
         avatar: avatar || '',
         plan: 'Free',
-        credit: 50, // 50 Welcome credits!
+        credit: 20, // 20 Welcome credits!
         referralCode: generateReferralCode()
       });
       await user.save();
