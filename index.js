@@ -27,7 +27,9 @@ if (!process.env.MONGO_URI) {
 const userSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   name: { type: String, default: 'Guest User' },
-  email: { type: String },
+  email: { type: String, unique: true, sparse: true },
+  password: { type: String },
+  googleId: { type: String, unique: true, sparse: true },
   avatar: { type: String },
   credit: { type: Number, default: 0 },
   plan: { type: String, default: 'Free' },
@@ -177,6 +179,121 @@ app.post('/api/guest/:deviceId/redeem', async (req, res) => {
     res.status(400).json({ error: 'Not eligible for any rewards yet, or already redeemed.' });
   } catch (error) {
     console.error('Redeem Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- PASSWORD HASHING HELPERS ---
+const hashPassword = (password) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+};
+
+const verifyPassword = (password, storedPassword) => {
+  if (!storedPassword) return false;
+  const parts = storedPassword.split(':');
+  if (parts.length !== 2) return false;
+  const [salt, hash] = parts;
+  const checkHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+  return hash === checkHash;
+};
+
+// 1. Email Register Route
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  try {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    const hashedPassword = hashPassword(password);
+    const userId = 'user_' + crypto.randomBytes(8).toString('hex');
+
+    const user = new User({
+      id: userId,
+      name,
+      email,
+      password: hashedPassword,
+      plan: 'Free',
+      credit: 50, // 50 Welcome credits!
+      referralCode: generateReferralCode()
+    });
+
+    await user.save();
+
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    res.json({ success: true, token, user });
+  } catch (error) {
+    console.error('Register Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 2. Email Login Route
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user || !user.password) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const isValid = verifyPassword(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    res.json({ success: true, token, user });
+  } catch (error) {
+    console.error('Login Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 3. Google OAuth/Credentials Auth Route
+app.post('/api/auth/google', async (req, res) => {
+  const { email, name, avatar, googleId } = req.body;
+  if (!email || !googleId) {
+    return res.status(400).json({ error: 'Email and Google ID are required' });
+  }
+
+  try {
+    let user = await User.findOne({ $or: [{ googleId }, { email }] });
+    if (!user) {
+      user = new User({
+        id: 'google_' + googleId,
+        name: name || 'Google User',
+        email: email,
+        googleId: googleId,
+        avatar: avatar || '',
+        plan: 'Free',
+        credit: 50, // 50 Welcome credits!
+        referralCode: generateReferralCode()
+      });
+      await user.save();
+    } else {
+      if (!user.googleId) {
+        user.googleId = googleId;
+        if (avatar && !user.avatar) user.avatar = avatar;
+        await user.save();
+      }
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    res.json({ success: true, token, user });
+  } catch (error) {
+    console.error('Google Auth Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
