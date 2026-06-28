@@ -5,6 +5,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 require('dotenv').config();
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_relook_2026';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -227,7 +228,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     await user.save();
 
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ success: true, token, user });
   } catch (error) {
     console.error('Register Error:', error);
@@ -253,7 +254,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ success: true, token, user });
   } catch (error) {
     console.error('Login Error:', error);
@@ -290,7 +291,7 @@ app.post('/api/auth/google', async (req, res) => {
       }
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'your_fallback_jwt_secret', { expiresIn: '30d' });
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ success: true, token, user });
   } catch (error) {
     console.error('Google Auth Error:', error);
@@ -307,7 +308,7 @@ app.post('/api/auth/update', async (req, res) => {
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_fallback_jwt_secret');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const { name, newPassword } = req.body;
 
     const user = await User.findOne({ id: decoded.id });
@@ -351,7 +352,7 @@ app.get('/auth/me', async (req, res) => {
 
   try {
     // Verify token identity
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
 
     // Fetch the REAL, secure credit balance from database
     const user = await User.findOne({ id: decoded.id });
@@ -371,7 +372,7 @@ app.post('/auth/deduct', async (req, res) => {
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findOne({ id: decoded.id });
 
     if (!user) throw new Error('User not found in DB');
@@ -394,7 +395,7 @@ app.post('/api/credits/deduct', async (req, res) => {
   let userId = deviceId; // Guest fallback
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) {
       return res.status(401).json({ error: 'Invalid Token' });
@@ -437,7 +438,7 @@ app.post('/api/credits/refund', async (req, res) => {
   let userId = deviceId; // Guest fallback
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) {
       return res.status(401).json({ error: 'Invalid Token' });
@@ -550,7 +551,7 @@ app.post('/api/generate', async (req, res) => {
   let userId = deviceId; // Guest fallback
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) {
       return res.status(401).json({ error: 'Invalid Token' });
@@ -646,7 +647,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) { }
   }
@@ -833,7 +834,7 @@ app.post('/api/generate-image', async (req, res) => {
     let userId = deviceId;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       try {
-        const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+        const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
         userId = decoded.id;
       } catch (e) { }
     }
