@@ -399,21 +399,13 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     
     if (!stripe) {
-      // Mock / fallback checkout link for testing when STRIPE_SECRET_KEY is not set
-      console.log(`STRIPE_SECRET_KEY not set. Simulating checkout for user ${decoded.id}`);
-      try {
-        const user = await User.findOne({ id: decoded.id });
-        if (user) {
-          user.credit += Number(credits);
-          user.plan = packageName.split(' ')[0];
-          await user.save();
-        }
-      } catch (e) {
-        console.error('Mock credit upgrade failed:', e);
-      }
+      // Mock / fallback checkout link pointing to our beautiful local checkout page
+      console.log(`STRIPE_SECRET_KEY not set. Redirecting to simulated checkout for user ${decoded.id}`);
+      const frontendBase = successUrl ? successUrl.split('#')[0] : 'http://localhost:5173/';
+      const mockCheckoutUrl = `${frontendBase}#/checkout?mock=true&amount=${amount}&credits=${credits}&packageName=${encodeURIComponent(packageName)}`;
       return res.json({ 
         success: true, 
-        url: `${successUrl || 'http://localhost:5173/#/profile'}?session_id=mock_stripe_session_completed` 
+        url: mockCheckoutUrl
       });
     }
 
@@ -446,6 +438,38 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
   } catch (error) {
     console.error('Create Checkout Session Error:', error);
     res.status(500).json({ error: 'Failed to create payment session' });
+  }
+});
+
+// 6. Confirm Simulated Checkout Payment Route
+app.post('/api/payment/confirm-mock-payment', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const { credits, packageName } = req.body;
+
+  if (!credits || !packageName) {
+    return res.status(400).json({ error: 'Missing package details' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findOne({ id: decoded.id });
+    if (user) {
+      user.credit += Number(credits);
+      user.plan = packageName.split(' ')[0]; // e.g. "Basic", "Pro"
+      await user.save();
+      console.log(`Simulated Stripe: Credited ${credits} tokens to ${user.id}`);
+      res.json({ success: true, user });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Confirm Mock Payment Error:', error);
+    res.status(500).json({ error: 'Failed to complete payment simulation' });
   }
 });
 
