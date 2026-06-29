@@ -11,6 +11,50 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+
+// --- STRIPE PAYMENTS INTERFACE ---
+const Stripe = require('stripe');
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
+
+// Stripe Webhook Endpoint (Must be parsed as raw body before express.json() middleware)
+app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+  try {
+    if (stripe && endpointSecret && sig) {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } else {
+      event = JSON.parse(req.body.toString());
+    }
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const { userId, creditsToAdd, newPlan } = session.metadata;
+
+    if (userId && creditsToAdd) {
+      try {
+        const user = await User.findOne({ id: userId });
+        if (user) {
+          user.credit += Number(creditsToAdd);
+          if (newPlan) user.plan = newPlan;
+          await user.save();
+          console.log(`Stripe: Successfully credited ${creditsToAdd} tokens to ${userId}`);
+        }
+      } catch (err) {
+        console.error('Error updating user credits via Stripe webhook:', err);
+      }
+    }
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -334,6 +378,74 @@ app.post('/api/auth/update', async (req, res) => {
   } catch (error) {
     console.error('Update Profile Error:', error);
     res.status(401).json({ error: 'Invalid or expired token' });
+  }
+});
+
+// 5. Create Stripe Checkout Session Route
+app.post('/api/payment/create-checkout-session', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const { amount, credits, packageName, successUrl, cancelUrl } = req.body;
+
+  if (!amount || !credits || !packageName) {
+    return res.status(400).json({ error: 'Missing package details' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    if (!stripe) {
+      // Mock / fallback checkout link for testing when STRIPE_SECRET_KEY is not set
+      console.log(`STRIPE_SECRET_KEY not set. Simulating checkout for user ${decoded.id}`);
+      try {
+        const user = await User.findOne({ id: decoded.id });
+        if (user) {
+          user.credit += Number(credits);
+          user.plan = packageName.split(' ')[0];
+          await user.save();
+        }
+      } catch (e) {
+        console.error('Mock credit upgrade failed:', e);
+      }
+      return res.json({ 
+        success: true, 
+        url: `${successUrl || 'http://localhost:5173/#/profile'}?session_id=mock_stripe_session_completed` 
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: packageName,
+              description: `Add ${credits} credits to your ResumeOK account`,
+            },
+            unit_amount: Math.round(amount * 100), // In cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      metadata: {
+        userId: decoded.id,
+        creditsToAdd: credits,
+        newPlan: packageName.split(' ')[0] // e.g. "Basic", "Pro", "Ultimate"
+      },
+      success_url: successUrl || 'http://localhost:5173/#/profile?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: cancelUrl || 'http://localhost:5173/#/profile?checkout=cancelled',
+    });
+
+    res.json({ success: true, url: session.url });
+  } catch (error) {
+    console.error('Create Checkout Session Error:', error);
+    res.status(500).json({ error: 'Failed to create payment session' });
   }
 });
 
