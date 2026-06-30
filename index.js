@@ -82,6 +82,11 @@ const userSchema = new mongoose.Schema({
   referredBy: { type: String, index: true },
   referralLevel: { type: Number, default: 0 },
   totalJoined: { type: Number, default: 0 },
+  subscriptionActive: { type: Boolean, default: false },
+  subscriptionPlan: { type: String },
+  subscriptionExpiresAt: { type: Date },
+  lastResetDate: { type: Date },
+  appleOriginalTransactionId: { type: String, index: true, sparse: true },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -90,6 +95,38 @@ const generateReferralCode = () => {
 };
 
 const User = mongoose.model('User', userSchema);
+
+// Passive subscription verification & credit reset/expiry helper
+async function validateUserSubscription(user) {
+  if (!user.subscriptionActive) return;
+
+  const now = new Date();
+
+  // 1. Check expiration
+  if (user.subscriptionExpiresAt && now > user.subscriptionExpiresAt) {
+    user.subscriptionActive = false;
+    user.plan = 'Free';
+    user.credit = 0;
+    await user.save();
+    console.log(`Passive: Subscription for user ${user.id} has expired. Credits reset to 0.`);
+    return;
+  }
+
+  // 2. Check weekly credit reset (e.g. 7 days since lastResetDate)
+  if (user.lastResetDate) {
+    const lastReset = new Date(user.lastResetDate);
+    const oneWeekInMs = 7 * 24 * 60 * 60 * 1000;
+    
+    if (now.getTime() - lastReset.getTime() >= oneWeekInMs) {
+      const maxCredits = user.subscriptionPlan === 'Pro' ? 400 : 200;
+      user.credit = maxCredits;
+      // Set new reset cycle date to preserve weekly interval
+      user.lastResetDate = now;
+      await user.save();
+      console.log(`Passive: Reset weekly credits for user ${user.id} to ${maxCredits}`);
+    }
+  }
+}
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -495,6 +532,8 @@ app.get('/auth/me', async (req, res) => {
 
     if (!user) throw new Error('User not found in DB');
 
+    await validateUserSubscription(user);
+
     res.json({ user });
   } catch (err) {
     res.status(401).json({ error: 'Session expired or invalid' });
@@ -546,6 +585,8 @@ app.post('/api/credits/deduct', async (req, res) => {
     if (!user) {
       user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       await user.save();
+    } else {
+      await validateUserSubscription(user);
     }
 
     if (user.credit < deductAmount) {
@@ -830,8 +871,13 @@ app.post('/purchase/verify-apple', async (req, res) => {
             if (!user) {
               user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
             }
-            user.credit += creditsToAdd;
-            if (newPlan) user.plan = newPlan;
+            user.subscriptionActive = true;
+            user.subscriptionPlan = newPlan;
+            user.appleOriginalTransactionId = payload.originalTransactionId || transactionId;
+            user.subscriptionExpiresAt = payload.expiresDate ? new Date(payload.expiresDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            user.lastResetDate = payload.purchaseDate ? new Date(payload.purchaseDate) : new Date();
+            user.credit = creditsToAdd;
+            user.plan = newPlan;
             await user.save();
 
             console.log(`Apple StoreKit 2: Granted ${creditsToAdd} credits to ${userId} via JWS decoding`);
@@ -939,9 +985,19 @@ app.post('/purchase/verify-apple', async (req, res) => {
       if (!user) {
         user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       }
+      
+      const transactionId = purchasedItem.transaction_id;
+      const originalTransactionId = purchasedItem.original_transaction_id || transactionId;
+      const expiresDate = purchasedItem.expires_date_ms ? new Date(Number(purchasedItem.expires_date_ms)) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const purchaseDate = purchasedItem.purchase_date_ms ? new Date(Number(purchasedItem.purchase_date_ms)) : new Date();
 
-      user.credit += creditsToAdd;
-      if (newPlan) user.plan = newPlan;
+      user.subscriptionActive = true;
+      user.subscriptionPlan = newPlan;
+      user.appleOriginalTransactionId = originalTransactionId;
+      user.subscriptionExpiresAt = expiresDate;
+      user.lastResetDate = purchaseDate;
+      user.credit = creditsToAdd;
+      user.plan = newPlan;
 
       await user.save();
       console.log(`Apple StoreKit: Granted ${creditsToAdd} credits to ${userId}`);
@@ -1061,6 +1117,102 @@ app.post('/api/generate-image', async (req, res) => {
   } catch (error) {
     console.error('Generate Image Error:', error);
     res.status(500).json({ error: error.message || 'Server Error' });
+  }
+});
+
+// 8. App Store Server Notifications V2 Webhook
+app.post('/purchase/apple-webhook', async (req, res) => {
+  const { signedPayload } = req.body;
+  if (!signedPayload) {
+    return res.status(400).json({ error: 'Missing signedPayload' });
+  }
+
+  try {
+    console.log("---------------- APPLE WEBHOOK START ----------------");
+    
+    // Decodes Apple notification payload (which is a JWS JWT token)
+    const payloadParts = signedPayload.split('.');
+    if (payloadParts.length !== 3) {
+      console.error("Invalid notification JWS:", signedPayload);
+      return res.status(400).json({ error: 'Invalid JWS payload format' });
+    }
+
+    const payload = JSON.parse(Buffer.from(payloadParts[1], 'base64').toString('utf8'));
+    console.log("Decoded Apple Webhook Notification:", {
+      notificationType: payload.notificationType,
+      subtype: payload.subtype,
+      notificationUUID: payload.notificationUUID
+    });
+
+    const data = payload.data;
+    if (!data || !data.signedTransactionInfo) {
+      console.error("Webhook payload missing signedTransactionInfo:", payload);
+      return res.status(400).json({ error: 'Missing signedTransactionInfo' });
+    }
+
+    // Decode transaction info JWS
+    const transactionParts = data.signedTransactionInfo.split('.');
+    if (transactionParts.length !== 3) {
+      console.error("Invalid transaction JWS:", data.signedTransactionInfo);
+      return res.status(400).json({ error: 'Invalid JWS transaction format' });
+    }
+
+    const transaction = JSON.parse(Buffer.from(transactionParts[1], 'base64').toString('utf8'));
+    console.log("Decoded Webhook Transaction Details:", {
+      productId: transaction.productId,
+      transactionId: transaction.transactionId,
+      originalTransactionId: transaction.originalTransactionId,
+      purchaseDate: transaction.purchaseDate ? new Date(transaction.purchaseDate) : null,
+      expiresDate: transaction.expiresDate ? new Date(transaction.expiresDate) : null
+    });
+
+    const { productId, originalTransactionId, transactionId, purchaseDate, expiresDate } = transaction;
+    const finalOriginalId = originalTransactionId || transactionId;
+
+    if (!finalOriginalId) {
+      console.error("Webhook transaction missing identifier:", transaction);
+      return res.status(400).json({ error: 'Missing originalTransactionId' });
+    }
+
+    // Find the user mapped to this originalTransactionId
+    const user = await User.findOne({ appleOriginalTransactionId: finalOriginalId });
+    if (!user) {
+      console.warn(`Webhook Warn: No user found for appleOriginalTransactionId: ${finalOriginalId}`);
+      console.log("---------------- APPLE WEBHOOK END ----------------");
+      return res.json({ success: true, message: 'No mapped user found' });
+    }
+
+    const notificationType = payload.notificationType;
+    let newPlan = null;
+    let creditsToAdd = 0;
+
+    if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
+    else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
+
+    if (notificationType === 'SUBSCRIBED' || notificationType === 'DID_RENEW') {
+      if (newPlan) {
+        user.subscriptionActive = true;
+        user.subscriptionPlan = newPlan;
+        user.subscriptionExpiresAt = expiresDate ? new Date(expiresDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        user.lastResetDate = purchaseDate ? new Date(purchaseDate) : new Date();
+        user.credit = creditsToAdd; // Reset credits to maximum
+        user.plan = newPlan;
+        await user.save();
+        console.log(`Webhook: Subscription renewed/subscribed for user ${user.id}. Credits reset to ${creditsToAdd}.`);
+      }
+    } else if (notificationType === 'EXPIRED' || notificationType === 'REVOKE' || notificationType === 'GRACE_PERIOD_EXPIRED') {
+      user.subscriptionActive = false;
+      user.plan = 'Free';
+      user.credit = 0; // Subscription inactive/expired, reset to 0
+      await user.save();
+      console.log(`Webhook: Subscription expired/revoked for user ${user.id}. Plan reset to Free, credits to 0.`);
+    }
+
+    console.log("---------------- APPLE WEBHOOK END ----------------");
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Apple Webhook Execution Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
