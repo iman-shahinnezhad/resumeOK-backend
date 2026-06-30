@@ -1120,99 +1120,32 @@ app.post('/api/generate-image', async (req, res) => {
   }
 });
 
-// 8. App Store Server Notifications V2 Webhook
-app.post('/purchase/apple-webhook', async (req, res) => {
-  const { signedPayload } = req.body;
-  if (!signedPayload) {
-    return res.status(400).json({ error: 'Missing signedPayload' });
+// 8. Degrade User to Free (Client-side StoreKit Sync)
+app.post('/purchase/degrade-to-free', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  const token = authHeader.split(' ')[1];
   try {
-    console.log("---------------- APPLE WEBHOOK START ----------------");
-    
-    // Decodes Apple notification payload (which is a JWS JWT token)
-    const payloadParts = signedPayload.split('.');
-    if (payloadParts.length !== 3) {
-      console.error("Invalid notification JWS:", signedPayload);
-      return res.status(400).json({ error: 'Invalid JWS payload format' });
-    }
-
-    const payload = JSON.parse(Buffer.from(payloadParts[1], 'base64').toString('utf8'));
-    console.log("Decoded Apple Webhook Notification:", {
-      notificationType: payload.notificationType,
-      subtype: payload.subtype,
-      notificationUUID: payload.notificationUUID
-    });
-
-    const data = payload.data;
-    if (!data || !data.signedTransactionInfo) {
-      console.error("Webhook payload missing signedTransactionInfo:", payload);
-      return res.status(400).json({ error: 'Missing signedTransactionInfo' });
-    }
-
-    // Decode transaction info JWS
-    const transactionParts = data.signedTransactionInfo.split('.');
-    if (transactionParts.length !== 3) {
-      console.error("Invalid transaction JWS:", data.signedTransactionInfo);
-      return res.status(400).json({ error: 'Invalid JWS transaction format' });
-    }
-
-    const transaction = JSON.parse(Buffer.from(transactionParts[1], 'base64').toString('utf8'));
-    console.log("Decoded Webhook Transaction Details:", {
-      productId: transaction.productId,
-      transactionId: transaction.transactionId,
-      originalTransactionId: transaction.originalTransactionId,
-      purchaseDate: transaction.purchaseDate ? new Date(transaction.purchaseDate) : null,
-      expiresDate: transaction.expiresDate ? new Date(transaction.expiresDate) : null
-    });
-
-    const { productId, originalTransactionId, transactionId, purchaseDate, expiresDate } = transaction;
-    const finalOriginalId = originalTransactionId || transactionId;
-
-    if (!finalOriginalId) {
-      console.error("Webhook transaction missing identifier:", transaction);
-      return res.status(400).json({ error: 'Missing originalTransactionId' });
-    }
-
-    // Find the user mapped to this originalTransactionId
-    const user = await User.findOne({ appleOriginalTransactionId: finalOriginalId });
-    if (!user) {
-      console.warn(`Webhook Warn: No user found for appleOriginalTransactionId: ${finalOriginalId}`);
-      console.log("---------------- APPLE WEBHOOK END ----------------");
-      return res.json({ success: true, message: 'No mapped user found' });
-    }
-
-    const notificationType = payload.notificationType;
-    let newPlan = null;
-    let creditsToAdd = 0;
-
-    if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
-    else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
-
-    if (notificationType === 'SUBSCRIBED' || notificationType === 'DID_RENEW') {
-      if (newPlan) {
-        user.subscriptionActive = true;
-        user.subscriptionPlan = newPlan;
-        user.subscriptionExpiresAt = expiresDate ? new Date(expiresDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-        user.lastResetDate = purchaseDate ? new Date(purchaseDate) : new Date();
-        user.credit = creditsToAdd; // Reset credits to maximum
-        user.plan = newPlan;
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findOne({ id: decoded.id });
+    if (user) {
+      if (user.subscriptionActive) {
+        user.subscriptionActive = false;
+        user.plan = 'Free';
+        user.credit = 0;
         await user.save();
-        console.log(`Webhook: Subscription renewed/subscribed for user ${user.id}. Credits reset to ${creditsToAdd}.`);
+        console.log(`StoreKit sync: Set user ${user.id} to Free (no active subscription found in StoreKit).`);
       }
-    } else if (notificationType === 'EXPIRED' || notificationType === 'REVOKE' || notificationType === 'GRACE_PERIOD_EXPIRED') {
-      user.subscriptionActive = false;
-      user.plan = 'Free';
-      user.credit = 0; // Subscription inactive/expired, reset to 0
-      await user.save();
-      console.log(`Webhook: Subscription expired/revoked for user ${user.id}. Plan reset to Free, credits to 0.`);
+      res.json({ success: true, user });
+    } else {
+      res.status(404).json({ error: 'User not found' });
     }
-
-    console.log("---------------- APPLE WEBHOOK END ----------------");
-    res.json({ success: true });
   } catch (error) {
-    console.error('Apple Webhook Execution Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Degrade To Free Error:', error);
+    res.status(500).json({ error: 'Failed to update subscription status' });
   }
 });
 
