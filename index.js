@@ -824,10 +824,6 @@ app.post('/purchase/verify-apple', async (req, res) => {
           let newPlan = null;
           if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
           else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
-          else if (productId === 'com.resumeok.basic') { creditsToAdd = 100; newPlan = 'Basic'; }
-          else if (productId === 'com.resumeok.pro') { creditsToAdd = 200; newPlan = 'Pro'; }
-          else if (productId === 'com.resumeok.ultimate') { creditsToAdd = 500; newPlan = 'Ultimate'; }
-          else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
           if (creditsToAdd > 0) {
             let user = await User.findOne({ id: userId });
@@ -937,10 +933,6 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
     if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
     else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
-    else if (productId === 'com.resumeok.basic') { creditsToAdd = 100; newPlan = 'Basic'; }
-    else if (productId === 'com.resumeok.pro') { creditsToAdd = 200; newPlan = 'Pro'; }
-    else if (productId === 'com.resumeok.ultimate') { creditsToAdd = 500; newPlan = 'Ultimate'; }
-    else if (productId === 'com.resumeok.max') { creditsToAdd = 100; newPlan = 'Max'; }
 
     if (creditsToAdd > 0) {
       let user = await User.findOne({ id: userId });
