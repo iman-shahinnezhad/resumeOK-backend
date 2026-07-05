@@ -116,7 +116,7 @@ async function validateUserSubscription(user) {
   if (user.lastResetDate) {
     const lastReset = new Date(user.lastResetDate);
     const oneWeekInMs = 7 * 24 * 60 * 60 * 1000;
-    
+
     if (now.getTime() - lastReset.getTime() >= oneWeekInMs) {
       const maxCredits = user.subscriptionPlan === 'Pro' ? 400 : 200;
       user.credit = maxCredits;
@@ -226,7 +226,8 @@ app.get('/api/guest/:deviceId/referral-stats', async (req, res) => {
       success: true,
       referralCode: user.referralCode,
       totalJoined,
-      referralLevel: user.referralLevel || 0
+      referralLevel: user.referralLevel || 0,
+      referredBy: user.referredBy || null
     });
   } catch (error) {
     console.error('Referral Stats Error:', error);
@@ -406,7 +407,7 @@ app.post('/api/auth/update', async (req, res) => {
     }
 
     await user.save();
-    
+
     // Create copy without password to return
     const userResponse = user.toObject();
     delete userResponse.password;
@@ -434,14 +435,14 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     if (!stripe) {
       // Mock / fallback checkout link pointing to our beautiful local checkout page
       console.log(`STRIPE_SECRET_KEY not set. Redirecting to simulated checkout for user ${decoded.id}`);
       const frontendBase = successUrl ? successUrl.split('#')[0] : 'http://localhost:5173/';
       const mockCheckoutUrl = `${frontendBase}#/checkout?mock=true&amount=${amount}&credits=${credits}&packageName=${encodeURIComponent(packageName)}`;
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         url: mockCheckoutUrl
       });
     }
@@ -646,174 +647,7 @@ app.post('/api/credits/refund', async (req, res) => {
   }
 });
 
-// 5. Secure Upload Route (Segmind Proxy - Upload Only)
-app.post('/api/upload', async (req, res) => {
-  const { imageBase64 } = req.body;
-
-  if (!imageBase64) {
-    return res.status(400).json({ error: 'Image base64 is required' });
-  }
-
-  try {
-    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
-    if (!SEGMIND_API_KEY) return res.status(500).json({ error: 'Segmind key missing' });
-
-    const uploadRes = await fetch('https://workflows-api.segmind.com/upload-asset', {
-      method: 'POST',
-      headers: {
-        'x-api-key': SEGMIND_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ data_urls: [`data:image/jpeg;base64,${imageBase64}`] }),
-    });
-
-    if (!uploadRes.ok) throw new Error('Failed to upload image to AI server');
-    const uploadData = await uploadRes.json();
-
-    let uploadUrl = '';
-    if (Array.isArray(uploadData) && uploadData.length > 0) uploadUrl = uploadData[0];
-    else if (uploadData.file_urls && uploadData.file_urls.length > 0) uploadUrl = uploadData.file_urls[0];
-
-    if (!uploadUrl) throw new Error('No upload URL returned');
-
-    res.json({ success: true, uploadUrl });
-  } catch (error) {
-    console.error('Upload Error:', error.message);
-    res.status(500).json({ error: error.message || 'Server Error' });
-  }
-});
-
-// 5b. Secure Raw Binary Upload Route (Avoids base64 memory crash on client)
-app.post('/api/upload-binary', express.raw({ type: 'image/*', limit: '15mb' }), async (req, res) => {
-  try {
-    const imageBuffer = req.body;
-    if (!imageBuffer || imageBuffer.length === 0) {
-      return res.status(400).json({ error: 'Image raw binary content is required' });
-    }
-
-    const imageBase64 = imageBuffer.toString('base64');
-    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
-    if (!SEGMIND_API_KEY) return res.status(500).json({ error: 'Segmind key missing' });
-
-    const uploadRes = await fetch('https://workflows-api.segmind.com/upload-asset', {
-      method: 'POST',
-      headers: {
-        'x-api-key': SEGMIND_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ data_urls: [`data:image/jpeg;base64,${imageBase64}`] }),
-    });
-
-    if (!uploadRes.ok) throw new Error('Failed to upload image to AI server');
-    const uploadData = await uploadRes.json();
-
-    let uploadUrl = '';
-    if (Array.isArray(uploadData) && uploadData.length > 0) uploadUrl = uploadData[0];
-    else if (uploadData.file_urls && uploadData.file_urls.length > 0) uploadUrl = uploadData.file_urls[0];
-
-    if (!uploadUrl) throw new Error('No upload URL returned');
-
-    res.json({ success: true, uploadUrl });
-  } catch (error) {
-    console.error('Binary Upload Error:', error.message);
-    res.status(500).json({ error: error.message || 'Server Error' });
-  }
-});
-
-// 6. Secure AI Generation Route (Segmind Proxy - Generate Only)
-app.post('/api/generate', async (req, res) => {
-  const { deviceId, uploadUrl, eraPrompt, cost, quality, ratio } = req.body;
-  const authHeader = req.headers.authorization;
-
-  let userId = deviceId; // Guest fallback
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    try {
-      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
-      userId = decoded.id;
-    } catch (e) {
-      return res.status(401).json({ error: 'Invalid Token' });
-    }
-  }
-
-  if (!userId) return res.status(400).json({ error: 'Missing user identification' });
-  if (!eraPrompt) return res.status(400).json({ error: 'eraPrompt is required' });
-
-  try {
-    let user = await User.findOne({ id: userId });
-
-
-
-    if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
-      await user.save();
-    }
-
-    const deductAmount = typeof cost === 'number' ? cost : 2;
-
-    if (user.credit < deductAmount && deductAmount > 0) {
-      return res.status(403).json({ error: 'Insufficient credits. Please upgrade.' });
-    }
-
-    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
-    if (!SEGMIND_API_KEY) return res.status(500).json({ error: 'Segmind key missing' });
-
-    // 2. Generate Image
-    const generateRes = await fetch('https://api.segmind.com/v1/nano-banana-2', {
-      method: 'POST',
-      headers: {
-        'x-api-key': SEGMIND_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        seed: Math.floor(Math.random() * 1000000),
-        prompt: eraPrompt,
-        ...(uploadUrl ? { image_urls: [uploadUrl] } : {}),
-        web_search: false,
-        aspect_ratio: ratio || "1:1",
-        output_format: "jpg",
-        thinking_level: "minimal",
-        safety_tolerance: 4,
-        output_resolution: quality || "1K",
-        response_modalities: "IMAGE",
-        base64: true
-      }),
-    });
-
-    if (!generateRes.ok) throw new Error('AI Generation failed');
-
-    let resultBase64 = '';
-    let genData = null;
-    let textResponse = '';
-    const contentType = generateRes.headers.get('content-type') || '';
-
-    if (contentType.includes('application/json')) {
-      genData = await generateRes.json();
-      if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
-      else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
-    } else if (contentType.includes('image')) {
-      const arrayBuffer = await generateRes.arrayBuffer();
-      resultBase64 = Buffer.from(arrayBuffer).toString('base64');
-    } else {
-      textResponse = await generateRes.text();
-    }
-
-    if (!resultBase64) throw new Error('Invalid response: ' + (genData ? JSON.stringify(genData) : textResponse));
-
-    // ONLY DEDUCT CREDIT IF GENERATION WAS SUCCESSFUL
-    user.credit -= deductAmount;
-    await user.save();
-
-    res.json({
-      success: true,
-      image: resultBase64.startsWith('http') ? resultBase64 : `data:image/jpeg;base64,${resultBase64}`,
-      remainingCredits: user.credit
-    });
-
-  } catch (error) {
-    console.error('Generation Error:', error.message);
-    res.status(500).json({ error: error.message || 'Server Error' });
-  }
-});
+// --- Endpoints for Image Generation/Upload (Removed as ResumeOK only uses Gemini) ---
 
 // 7. Direct Apple StoreKit Receipt Verification
 app.post('/purchase/verify-apple', async (req, res) => {
@@ -985,7 +819,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
       if (!user) {
         user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
       }
-      
+
       const transactionId = purchasedItem.transaction_id;
       const originalTransactionId = purchasedItem.original_transaction_id || transactionId;
       const expiresDate = purchasedItem.expires_date_ms ? new Date(Number(purchasedItem.expires_date_ms)) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -1012,113 +846,7 @@ app.post('/purchase/verify-apple', async (req, res) => {
 });
 
 
-// 7. Secure AI Image Route (Img2Img or Text2Img)
-app.post('/api/generate-image', async (req, res) => {
-  const { deviceId, uploadUrl, eraPrompt, cost, quality, ratio } = req.body;
-  const authHeader = req.headers.authorization;
-  if (!eraPrompt) return res.status(400).json({ error: 'eraPrompt is required' });
-
-  try {
-    let userId = deviceId;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
-        userId = decoded.id;
-      } catch (e) { }
-    }
-
-    let user = await User.findOne({ id: userId });
-    if (!user) {
-      user = new User({ id: userId, plan: 'Free', credit: 0, name: 'Guest User', referralCode: generateReferralCode() });
-      await user.save();
-    }
-    const deductAmount = typeof cost === 'number' ? cost : 2;
-    if (user.credit < deductAmount) return res.status(403).json({ error: 'Insufficient credits' });
-
-    const SEGMIND_API_KEY = process.env.SEGMIND_API_KEY;
-    let resultBase64 = '';
-
-    if (uploadUrl && uploadUrl.trim().length > 0) {
-      // Image to Image via sdxl-img2img
-      const imgRes = await fetch(uploadUrl);
-      const arrayBuffer = await imgRes.arrayBuffer();
-      const imageBase64 = Buffer.from(arrayBuffer).toString('base64');
-
-      const generateRes = await fetch('https://api.segmind.com/v1/sdxl-img2img', {
-        method: 'POST',
-        headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: eraPrompt,
-          image: imageBase64,
-          strength: 0.8,
-          samples: 1,
-          scheduler: "dpmpp_2m",
-          num_inference_steps: 25,
-          guidance_scale: 7.5,
-          base64: true
-        }),
-      });
-
-      if (!generateRes.ok) {
-        const errText = await generateRes.text();
-        throw new Error('API Error: ' + errText);
-      }
-
-      const genData = await generateRes.json();
-      if (genData.image) resultBase64 = genData.image;
-      if (!resultBase64) throw new Error('Invalid response: ' + JSON.stringify(genData));
-    } else {
-      // Text to Image via nano-banana-2
-      const generateRes = await fetch('https://api.segmind.com/v1/nano-banana-2', {
-        method: 'POST',
-        headers: { 'x-api-key': SEGMIND_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seed: Math.floor(Math.random() * 1000000),
-          prompt: eraPrompt,
-          web_search: false,
-          aspect_ratio: ratio || "1:1",
-          output_format: "jpg",
-          thinking_level: "minimal",
-          safety_tolerance: 4,
-          output_resolution: quality || "1K",
-          response_modalities: "IMAGE",
-          base64: true
-        }),
-      });
-
-      if (!generateRes.ok) {
-        const errText = await generateRes.text();
-        throw new Error('API Error: ' + errText);
-      }
-
-      let genData = null;
-      const contentType = generateRes.headers.get('content-type') || '';
-
-      if (contentType.includes('application/json')) {
-        genData = await generateRes.json();
-        if (Array.isArray(genData) && genData.length > 0) resultBase64 = genData[0].base64 || genData[0];
-        else if (genData && typeof genData === 'object') resultBase64 = genData.base64 || genData.image;
-      } else if (contentType.includes('image')) {
-        const arrayBuffer = await generateRes.arrayBuffer();
-        resultBase64 = Buffer.from(arrayBuffer).toString('base64');
-      }
-
-      if (!resultBase64) throw new Error('Invalid response: ' + (genData ? JSON.stringify(genData) : 'Empty response'));
-    }
-
-    user.credit -= deductAmount;
-    await user.save();
-
-    res.json({
-      success: true,
-      image: `data:image/jpeg;base64,${resultBase64}`,
-      remainingCredits: user.credit
-    });
-  } catch (error) {
-    console.error('Generate Image Error:', error);
-    res.status(500).json({ error: error.message || 'Server Error' });
-  }
-});
+// --- Endpoints for Image Generation/Upload (Removed as ResumeOK only uses Gemini) ---
 
 // 8. Degrade User to Free (Client-side StoreKit Sync)
 app.post('/purchase/degrade-to-free', async (req, res) => {
