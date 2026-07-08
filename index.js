@@ -877,6 +877,15 @@ app.post('/purchase/degrade-to-free', async (req, res) => {
   }
 });
 
+// App configuration & update checker endpoint
+app.get('/api/app-config', (req, res) => {
+  res.json({
+    latestVersion: '2.0.2',
+    minVersion: '2.0.1',
+    trackViewUrl: 'https://apps.apple.com/app/resumeok-ai-resume-builder/id6783382482'
+  });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Production Backend Server running on port ${PORT}`);
 });
