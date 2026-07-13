@@ -77,7 +77,7 @@ class BackgroundWorkers {
       await this.seedCompanies();
       const companies = await Company.find({
         $or: [
-          { nextScanAt: { $lte: scanStartTime } },
+          { nextScanAt: { $lte: new Date() } },
           { nextScanAt: null }
         ]
       });
@@ -133,11 +133,11 @@ class BackgroundWorkers {
         // Upsert active jobs in local database
         for (const job of jobs) {
           try {
-            // Deduplication: Check if active job with same title, company, and location already exists
+            // Deduplication: Check if active job with same title, company, and location already exists (exact indexed match)
             const exists = await DbJob.findOne({
               company: company.name.toUpperCase(),
-              title: { $regex: new RegExp(`^${job.title.trim()}$`, 'i') },
-              location: { $regex: new RegExp(`^${job.location.trim()}$`, 'i') },
+              title: job.title.trim(),
+              location: job.location.trim(),
               isExpired: false
             });
 
