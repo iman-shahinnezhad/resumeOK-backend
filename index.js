@@ -7,6 +7,23 @@ const crypto = require('crypto');
 require('dotenv').config();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_relook_2026';
 
+// --- PLUGGABLE ATS PROVIDERS ---
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+const ProviderRegistry = require('./src/providers/ProviderRegistry');
+const POPULAR_GREENHOUSE_COMPANIES = ['stripe', 'dropbox', 'deliveroo', 'vimeo', 'amplitude'];
+const POPULAR_LEVER_COMPANIES = ['kinsta', 'aircall', 'palantir'];
+
+// --- COMPANY DISCOVERY SERVICES ---
+const Company = require('./src/models/Company');
+const CompanyDiscoveryService = require('./src/services/CompanyDiscoveryService');
+
+// --- DATABASE JOBS AND BACKGROUND WORKERS ---
+const DbJob = require('./src/models/DbJob');
+const BackgroundWorkers = require('./src/workers/BackgroundWorkers');
+const CacheService = require('./src/services/CacheService');
+const AiMatchingService = require('./src/services/AiMatchingService');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -647,6 +664,299 @@ app.post('/api/credits/refund', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// COMPANY DISCOVERY ENDPOINTS
+// ----------------------------------------------------
+
+// --- ADMIN AUTHORIZATION MIDDLEWARE ---
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'resumeok_admin_secret_key_2026';
+
+function adminAuth(req, res, next) {
+  const apiKey = req.headers['x-admin-api-key'];
+  if (!apiKey || apiKey !== ADMIN_API_KEY) {
+    return res.status(403).json({ success: false, error: 'Forbidden: Invalid Admin API Key' });
+  }
+  next();
+}
+
+// Admin route to trigger company discovery seed insertion
+app.post('/api/admin/discover', adminAuth, async (req, res) => {
+  const { name, domain, companies } = req.body;
+
+  try {
+    if (companies && Array.isArray(companies)) {
+      console.log(`Starting discovery batch for ${companies.length} companies...`);
+      const results = [];
+      for (const item of companies) {
+        if (item.name && item.domain) {
+          try {
+            const result = await CompanyDiscoveryService.discoverCompany(item.name, item.domain);
+            results.push(result);
+          } catch (e) {
+            console.error(`Failed discovering seed item: name=${item.name}, domain=${item.domain}`, e);
+          }
+        }
+      }
+      return res.json({ success: true, count: results.length, companies: results });
+    }
+
+    if (!name || !domain) {
+      return res.status(400).json({ error: 'Missing name or domain fields' });
+    }
+
+    const result = await CompanyDiscoveryService.discoverCompany(name, domain);
+    res.json({ success: true, company: result });
+  } catch (error) {
+    console.error('Company Discovery Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to complete discovery scan' });
+  }
+});
+
+// ----------------------------------------------------
+// PLUGGABLE ATS PROVIDERS ENDPOINTS
+// ----------------------------------------------------
+
+// Fetch merged job listings directly from MongoDB Job persistence collection with search features
+// --- RATE LIMITER MIDDLEWARE ---
+const rateLimitCache = new Map();
+
+function rateLimiter(limit = 100, windowMs = 60 * 1000) {
+  return (req, res, next) => {
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const now = Date.now();
+    
+    let record = rateLimitCache.get(ip);
+    if (!record) {
+      record = { count: 0, resetTime: now + windowMs };
+      rateLimitCache.set(ip, record);
+    }
+    
+    if (now > record.resetTime) {
+      record.count = 0;
+      record.resetTime = now + windowMs;
+    }
+    
+    record.count++;
+    
+    if (record.count > limit) {
+      return res.status(429).json({ 
+        success: false, 
+        error: 'Too many requests. Please try again later.' 
+      });
+    }
+    
+    next();
+  };
+}
+
+const searchRateLimiter = rateLimiter(120, 60 * 1000); // 120 per min
+const applyRateLimiter = rateLimiter(5, 60 * 1000); // 5 per min
+
+// Fetch merged job listings directly from MongoDB Job persistence collection with search features
+app.get('/api/jobs', searchRateLimiter, async (req, res) => {
+  const { q, remote, location, company, provider, skills, sortBy, page, limit, lastCreatedAt } = req.query;
+
+  // 1. Check Query Cache
+  const cacheKey = JSON.stringify(req.query);
+  const cachedData = CacheService.get(cacheKey);
+  if (cachedData) {
+    return res.json(cachedData);
+  }
+
+  try {
+    const query = { isExpired: false };
+
+    // 2. Apply Filters
+    if (remote === 'true') {
+      query.remote = true;
+    }
+    if (location) {
+      query.location = new RegExp(location.trim(), 'i');
+    }
+    if (company) {
+      query.company = company.toUpperCase().trim();
+    }
+    if (provider) {
+      query.provider = provider.toLowerCase().trim();
+    }
+    if (skills) {
+      const skillsArray = typeof skills === 'string' 
+        ? skills.split(',').map(s => s.trim()) 
+        : Array.isArray(skills) ? skills : [];
+      if (skillsArray.length > 0) {
+        query.skills = { $in: skillsArray };
+      }
+    }
+
+    // 3. Keyset (Cursor-based) Pagination for scalability
+    if (lastCreatedAt) {
+      query.createdAt = { $lt: new Date(lastCreatedAt) };
+    }
+
+    // 4. Full-Text Search and Relevance scoring
+    let projection = null;
+    let sortOptions = { createdAt: -1 };
+
+    if (q && q.trim() !== '') {
+      const queryString = q.trim();
+      query.$text = { $search: queryString };
+      projection = { score: { $meta: 'textScore' } };
+      sortOptions = { score: { $meta: 'textScore' } };
+    }
+
+    // 5. Custom Sorting overrides
+    if (sortBy === 'date') {
+      sortOptions = { postedAt: -1, createdAt: -1 };
+    } else if (sortBy === 'company') {
+      sortOptions = { company: 1 };
+    }
+
+    // 6. Pagination offset limits
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(0, parseInt(limit, 10) || 0); // 0 means return all matching jobs
+    const skipNum = lastCreatedAt ? 0 : (pageNum - 1) * limitNum;
+
+    let cursor = DbJob.find(query, projection).sort(sortOptions);
+    if (limitNum > 0) {
+      cursor = cursor.skip(skipNum).limit(limitNum);
+    }
+
+    let jobs = await cursor;
+
+    // 7. Fuzzy/Regex fallback if full-text search yielded 0 results
+    if (jobs.length === 0 && q && q.trim() !== '') {
+      console.log(`Text search returned 0 results. Running fuzzy regex fallback for: ${q}`);
+      const terms = q.trim().split(/\s+/).filter(t => t.length > 1);
+      if (terms.length > 0) {
+        delete query.$text;
+        query.$or = [
+          ...terms.map(t => ({ title: { $regex: t, $options: 'i' } })),
+          ...terms.map(t => ({ description: { $regex: t, $options: 'i' } })),
+          ...terms.map(t => ({ requirements: { $regex: t, $options: 'i' } }))
+        ];
+
+        let fallbackCursor = DbJob.find(query).sort({ createdAt: -1 });
+        if (limitNum > 0) {
+          fallbackCursor = fallbackCursor.skip(skipNum).limit(limitNum);
+        }
+        jobs = await fallbackCursor;
+      }
+    }
+
+    // Map database jobs to legacy schema expected by client app
+    const legacyJobs = jobs.map(job => {
+      const content = job.description + 
+        (job.requirements ? "\n\n" + job.requirements : "");
+        
+      return {
+        id: job.jobId,
+        title: job.title,
+        absolute_url: job.applicationUrl,
+        location: { name: job.location },
+        departments: [{ id: 0, name: "General" }],
+        content: content,
+        companyName: job.company,
+        boardToken: job.company.toLowerCase(),
+        sourceType: job.provider,
+        skills: job.skills || [],
+        canApplyDirectly: job.canApplyDirectly,
+        createdAt: job.createdAt
+      };
+    });
+
+    const responseData = { 
+      success: true, 
+      count: legacyJobs.length,
+      page: pageNum,
+      limit: limitNum,
+      jobs: legacyJobs 
+    };
+
+    // Cache responses for 60 seconds
+    CacheService.set(cacheKey, responseData, 60);
+
+    res.json(responseData);
+  } catch (error) {
+    console.error('Error in search engine jobs fetch:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve search results' });
+  }
+});
+
+// Admin route to manually trigger job sync workers
+app.post('/api/admin/workers/run', adminAuth, async (req, res) => {
+  try {
+    await BackgroundWorkers.refreshJobs();
+    res.json({ success: true, message: 'Job refresh worker run triggered successfully' });
+  } catch (error) {
+    console.error('Manual Worker Run Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI-powered resume matching, score compatibility computation, skill breakdown, and cover letter generator
+const aiRateLimiter = rateLimiter(10, 60 * 1000); // 10 matches per minute
+app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async (req, res) => {
+  const { jobId } = req.params;
+  const { resumeText, resumeBase64 } = req.body;
+  const resumeFile = req.file;
+
+  try {
+    // 1. Find job details in MongoDB
+    const job = await DbJob.findOne({ jobId, isExpired: false });
+    if (!job) {
+      return res.status(404).json({ success: false, error: 'Job posting not found or expired' });
+    }
+
+    // 2. Extract base64 resume if uploaded via multipart file
+    let base64Data = resumeBase64;
+    if (resumeFile) {
+      base64Data = resumeFile.buffer.toString('base64');
+    }
+
+    if (!resumeText && !base64Data) {
+      return res.status(400).json({ success: false, error: 'Missing resume text or uploaded file' });
+    }
+
+    // 3. Call AI matching service
+    const matchResult = await AiMatchingService.matchResume(
+      { title: job.title, description: job.description, requirements: job.requirements },
+      resumeText,
+      base64Data
+    );
+
+    res.json({
+      success: true,
+      jobId,
+      ...matchResult
+    });
+  } catch (error) {
+    console.error('Error in job matching endpoint:', error);
+    res.status(500).json({ success: false, error: 'Failed to complete AI matching analysis' });
+  }
+});
+
+
+// Submit a candidate application with resume upload
+app.post('/api/jobs/apply', applyRateLimiter, upload.single('resume'), async (req, res) => {
+  const { jobId, companySlug, sourceType, firstName, lastName, email, phone, jobBoardKey } = req.body;
+  const resumeFile = req.file;
+
+  if (!jobId || !companySlug || !sourceType || !firstName || !lastName || !email || !resumeFile) {
+    return res.status(400).json({ error: 'Missing required application fields or resume file' });
+  }
+
+  try {
+    const provider = ProviderRegistry.get(sourceType);
+    const candidate = { firstName, lastName, email, phone, jobBoardKey };
+    
+    const result = await provider.apply(jobId, companySlug, candidate, resumeFile);
+    res.json(result);
+  } catch (error) {
+    console.error(`Apply Error for job ${jobId}:`, error);
+    res.status(500).json({ error: error.message || 'Failed to submit job application' });
+  }
+});
+
 // --- Endpoints for Image Generation/Upload (Removed as ResumeOK only uses Gemini) ---
 
 // 7. Direct Apple StoreKit Receipt Verification
@@ -888,4 +1198,6 @@ app.get('/api/app-config', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Production Backend Server running on port ${PORT}`);
+  // Start scheduled background workers
+  BackgroundWorkers.start();
 });
