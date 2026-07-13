@@ -24,9 +24,11 @@ const BackgroundWorkers = require('./src/workers/BackgroundWorkers');
 const CacheService = require('./src/services/CacheService');
 const AiMatchingService = require('./src/services/AiMatchingService');
 
+const compression = require('compression');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(compression());
 app.use(cors());
 
 // --- STRIPE PAYMENTS INTERFACE ---
