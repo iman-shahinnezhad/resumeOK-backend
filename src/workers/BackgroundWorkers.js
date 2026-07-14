@@ -141,9 +141,9 @@ class BackgroundWorkers {
         ]
       });
 
-      // Limit to 30 companies per sync pass to avoid CPU/connection starvation
+      // Limit to 50 companies per sync pass to avoid CPU/connection starvation
       const companies = typeof queryCursor.limit === 'function' 
-        ? await queryCursor.limit(30) 
+        ? await queryCursor.limit(50) 
         : await queryCursor;
 
       if (companies.length === 0) {
@@ -357,10 +357,10 @@ class BackgroundWorkers {
     // Backfill existing jobs skills on start
     this.backfillExistingJobSkills();
 
-    // 1. Refresh jobs worker: Every 1 hour
+    // 1. Refresh jobs worker: Every 1 minute to scan pending companies in batches
     const refreshInterval = setInterval(() => {
       this.refreshJobs();
-    }, 60 * 60 * 1000);
+    }, 1 * 60 * 1000);
     this.intervals.push(refreshInterval);
 
     // 2. Discover new companies worker: Every 12 hours
