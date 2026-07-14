@@ -134,12 +134,17 @@ class BackgroundWorkers {
 
     try {
       await this.seedCompanies();
-      const companies = await Company.find({
+      const queryCursor = Company.find({
         $or: [
           { nextScanAt: { $lte: new Date() } },
           { nextScanAt: null }
         ]
       });
+
+      // Limit to 30 companies per sync pass to avoid CPU/connection starvation
+      const companies = typeof queryCursor.limit === 'function' 
+        ? await queryCursor.limit(30) 
+        : await queryCursor;
 
       if (companies.length === 0) {
         console.log('No companies due for job refresh.');
@@ -250,6 +255,9 @@ class BackgroundWorkers {
         company.lastScannedAt = scanStartTime;
         company.nextScanAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
         await company.save();
+
+        // 500ms throttle delay to release Node event loop threads for client APIs
+        await new Promise(resolve => setTimeout(resolve, 500));
       });
 
       await promiseLimit(tasks, concurrencyLimit);
