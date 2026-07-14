@@ -2,16 +2,68 @@ const Company = require('../models/Company');
 const DbJob = require('../models/DbJob');
 const ProviderRegistry = require('../providers/ProviderRegistry');
 
-// Default seed list to populate the database on first boot
+// Default seed list to populate the database on first boot (60+ companies)
 const DEFAULT_SEED_COMPANIES = [
-  { name: 'stripe', provider: 'greenhouse', careerUrl: 'https://www.stripe.com/jobs' },
-  { name: 'dropbox', provider: 'greenhouse', careerUrl: 'https://www.dropbox.com/jobs' },
-  { name: 'deliveroo', provider: 'greenhouse', careerUrl: 'https://deliveroo.co.uk/jobs' },
-  { name: 'vimeo', provider: 'greenhouse', careerUrl: 'https://vimeo.com/jobs' },
-  { name: 'amplitude', provider: 'greenhouse', careerUrl: 'https://amplitude.com/jobs' },
-  { name: 'kinsta', provider: 'lever', careerUrl: 'https://kinsta.com/careers' },
-  { name: 'aircall', provider: 'lever', careerUrl: 'https://aircall.io/careers' },
-  { name: 'palantir', provider: 'lever', careerUrl: 'https://www.palantir.com/careers' }
+  { name: 'stripe', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/stripe' },
+  { name: 'dropbox', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/dropbox' },
+  { name: 'deliveroo', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/deliveroo' },
+  { name: 'vimeo', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/vimeo' },
+  { name: 'amplitude', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/amplitude' },
+  { name: 'airbnb', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/airbnb' },
+  { name: 'figma', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/figma' },
+  { name: 'reddit', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/reddit' },
+  { name: 'uber', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/uber' },
+  { name: 'github', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/github' },
+  { name: 'twilio', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/twilio' },
+  { name: 'asana', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/asana' },
+  { name: 'pinterest', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/pinterest' },
+  { name: 'robinhood', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/robinhood' },
+  { name: 'hashicorp', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/hashicorp' },
+  { name: 'lyft', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/lyft' },
+  { name: 'zoom', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/zoom' },
+  { name: 'databricks', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/databricks' },
+  { name: 'snowflake', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/snowflake' },
+  { name: 'coinbase', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/coinbase' },
+  { name: 'snapchat', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/snapchat' },
+  { name: 'squarespace', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/squarespace' },
+  { name: 'gusto', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/gusto' },
+  { name: 'plaid', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/plaid' },
+  { name: 'chime', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/chime' },
+  { name: 'wealthfront', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/wealthfront' },
+  { name: 'flexport', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/flexport' },
+  { name: 'affirm', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/affirm' },
+  { name: 'nerdwallet', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/nerdwallet' },
+  { name: 'instacart', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/instacart' },
+  { name: 'grubhub', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/grubhub' },
+  { name: 'doordash', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/doordash' },
+  { name: 'okta', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/okta' },
+  { name: 'elastic', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/elastic' },
+  { name: 'confluent', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/confluent' },
+  { name: 'gitlab', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/gitlab' },
+  { name: 'intercom', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/intercom' },
+  { name: 'sentry', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/sentry' },
+  { name: 'postman', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/postman' },
+  { name: 'notion', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/notion' },
+  { name: 'vercel', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/vercel' },
+  { name: 'netlify', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/netlify' },
+  { name: 'huggingface', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/huggingface' },
+  { name: 'miro', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/miro' },
+  { name: 'canva', provider: 'greenhouse', careerUrl: 'https://boards.greenhouse.io/canva' },
+  { name: 'kinsta', provider: 'lever', careerUrl: 'https://jobs.lever.co/kinsta' },
+  { name: 'aircall', provider: 'lever', careerUrl: 'https://jobs.lever.co/aircall' },
+  { name: 'palantir', provider: 'lever', careerUrl: 'https://jobs.lever.co/palantir' },
+  { name: 'netflix', provider: 'lever', careerUrl: 'https://jobs.lever.co/netflix' },
+  { name: 'hotjar', provider: 'lever', careerUrl: 'https://jobs.lever.co/hotjar' },
+  { name: 'eventbrite', provider: 'lever', careerUrl: 'https://jobs.lever.co/eventbrite' },
+  { name: 'udemy', provider: 'lever', careerUrl: 'https://jobs.lever.co/udemy' },
+  { name: 'shopify', provider: 'lever', careerUrl: 'https://jobs.lever.co/shopify' },
+  { name: 'atlassian', provider: 'lever', careerUrl: 'https://jobs.lever.co/atlassian' },
+  { name: '1password', provider: 'lever', careerUrl: 'https://jobs.lever.co/1password' },
+  { name: 'docker', provider: 'lever', careerUrl: 'https://jobs.lever.co/docker' },
+  { name: 'snyk', provider: 'lever', careerUrl: 'https://jobs.lever.co/snyk' },
+  { name: 'grafana', provider: 'lever', careerUrl: 'https://jobs.lever.co/grafana' },
+  { name: 'datadog', provider: 'lever', careerUrl: 'https://jobs.lever.co/datadog' },
+  { name: 'cockroach', provider: 'lever', careerUrl: 'https://jobs.lever.co/cockroach' }
 ];
 
 /**
@@ -42,23 +94,30 @@ class BackgroundWorkers {
   }
 
   /**
-   * Seed default companies if the collection is empty.
+   * Seed default companies if they are not already in the collection.
    */
   async seedCompanies() {
     try {
-      const count = await Company.countDocuments();
-      if (count === 0) {
-        console.log('Seeding default company list...');
-        for (const seed of DEFAULT_SEED_COMPANIES) {
+      console.log('Checking and seeding default company list...');
+      let seededCount = 0;
+      for (const seed of DEFAULT_SEED_COMPANIES) {
+        const nameUpper = seed.name.toUpperCase().trim();
+        const exists = await Company.findOne({ name: nameUpper });
+        if (!exists) {
           await Company.create({
-            name: seed.name.toUpperCase(),
+            name: nameUpper,
             careerUrl: seed.careerUrl,
             provider: seed.provider,
             boardUrl: seed.careerUrl,
             nextScanAt: new Date()
           });
+          seededCount++;
         }
-        console.log(`Successfully seeded ${DEFAULT_SEED_COMPANIES.length} companies.`);
+      }
+      if (seededCount > 0) {
+        console.log(`Successfully seeded ${seededCount} new companies.`);
+      } else {
+        console.log('All default seed companies are already present.');
       }
     } catch (e) {
       console.error('Error seeding companies:', e);

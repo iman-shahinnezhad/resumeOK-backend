@@ -12,22 +12,22 @@ describe('Background Workers Service', () => {
     jest.resetAllMocks();
   });
 
-  test('seedCompanies should create companies if count is 0', async () => {
-    Company.countDocuments.mockResolvedValue(0);
+  test('seedCompanies should create companies if not already present', async () => {
+    Company.findOne.mockResolvedValue(null);
     Company.create.mockResolvedValue({});
 
     await BackgroundWorkers.seedCompanies();
 
-    expect(Company.countDocuments).toHaveBeenCalled();
+    expect(Company.findOne).toHaveBeenCalled();
     expect(Company.create).toHaveBeenCalled();
   });
 
-  test('seedCompanies should skip if count is greater than 0', async () => {
-    Company.countDocuments.mockResolvedValue(10);
+  test('seedCompanies should skip if already present', async () => {
+    Company.findOne.mockResolvedValue({ name: 'STRIPE' });
 
     await BackgroundWorkers.seedCompanies();
 
-    expect(Company.countDocuments).toHaveBeenCalled();
+    expect(Company.findOne).toHaveBeenCalled();
     expect(Company.create).not.toHaveBeenCalled();
   });
 
