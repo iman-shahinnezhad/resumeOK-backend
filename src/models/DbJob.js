@@ -35,6 +35,7 @@ dbJobSchema.index({ isExpired: 1, createdAt: -1 });
 dbJobSchema.index({ isExpired: 1, remote: 1, location: 1 });
 dbJobSchema.index({ isExpired: 1, company: 1 });
 dbJobSchema.index({ isExpired: 1, provider: 1 });
+dbJobSchema.index({ isExpired: 1, skills: 1 });
 dbJobSchema.index({ company: 1, title: 1, location: 1 });
 
 const DbJob = mongoose.model('DbJob', dbJobSchema);
