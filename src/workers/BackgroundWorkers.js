@@ -135,6 +135,7 @@ class BackgroundWorkers {
     try {
       await this.seedCompanies();
       const queryCursor = Company.find({
+        provider: { $in: ['greenhouse', 'lever'] },
         $or: [
           { nextScanAt: { $lte: new Date() } },
           { nextScanAt: null }
