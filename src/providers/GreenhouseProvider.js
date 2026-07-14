@@ -81,8 +81,11 @@ class GreenhouseProvider extends JobProvider {
       }
       headers['Accept'] = 'application/json';
 
+      const greenhouseUrl = `https://boards-api.greenhouse.io/v1/boards/${companySlug}/jobs/${jobId}`;
+      console.log(`[Greenhouse Server Apply] URL: ${greenhouseUrl}, hasAuthHeader: ${!!headers['Authorization']}, jobId: ${jobId}, companySlug: ${companySlug}`);
+
       const postResponse = await fetch(
-        `https://boards-api.greenhouse.io/v1/boards/${companySlug}/jobs/${jobId}`,
+        greenhouseUrl,
         {
           method: 'POST',
           headers,
