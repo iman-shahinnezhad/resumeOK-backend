@@ -86,6 +86,46 @@ async function promiseLimit(tasks, limit) {
 }
 
 /**
+ * Extracts the exact ATS identifier slug from a company's URL configuration.
+ */
+function extractSlug(company) {
+  const url = company.boardUrl || company.careerUrl || '';
+  if (!url) {
+    return company.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  try {
+    if (company.provider === 'greenhouse') {
+      if (url.includes('for=')) {
+        const match = url.match(/for=([^&]+)/);
+        if (match) return match[1].toLowerCase().trim();
+      }
+      const parts = url.split('boards.greenhouse.io/');
+      if (parts.length > 1) {
+        const subpath = parts[1].split('?')[0].split('/')[0];
+        if (subpath && subpath !== 'embed') return subpath.toLowerCase().trim();
+      }
+      const jobParts = url.split('job-boards.greenhouse.io/');
+      if (jobParts.length > 1) {
+        const subpath = jobParts[1].split('?')[0].split('/')[0];
+        if (subpath) return subpath.toLowerCase().trim();
+      }
+    } else if (company.provider === 'lever') {
+      const parts = url.split('jobs.lever.co/');
+      if (parts.length > 1) {
+        const subpath = parts[1].split('?')[0].split('/')[0];
+        if (subpath) return subpath.toLowerCase().trim();
+      }
+    }
+  } catch (err) {
+    console.error('Error parsing slug from url:', url, err.message);
+  }
+
+  // General fallback by stripping special characters
+  return company.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
  * BackgroundWorkers Manager
  */
 class BackgroundWorkers {
@@ -156,12 +196,12 @@ class BackgroundWorkers {
       console.log(`Found ${companies.length} companies to scan. Limit concurrency to ${concurrencyLimit}.`);
 
       const tasks = companies.map(company => async () => {
-        const companyName = company.name.toLowerCase();
+        const slug = extractSlug(company);
         let providerInstance;
         try {
           providerInstance = ProviderRegistry.get(company.provider);
         } catch (err) {
-          console.error(`Skipping ${companyName}: unregistered provider ${company.provider}`);
+          console.error(`Skipping ${company.name}: unregistered provider ${company.provider}`);
           return;
         }
 
@@ -173,11 +213,11 @@ class BackgroundWorkers {
         while (attempts < 3 && !success) {
           attempts++;
           try {
-            console.log(`Scanning jobs for ${company.name} (Attempt ${attempts}/3)...`);
-            jobs = await providerInstance.fetchJobs(companyName);
+            console.log(`Scanning jobs for ${company.name} [slug: ${slug}] (Attempt ${attempts}/3)...`);
+            jobs = await providerInstance.fetchJobs(slug);
             success = true;
           } catch (fetchErr) {
-            console.warn(`Attempt ${attempts} failed for ${company.name}:`, fetchErr.message);
+            console.warn(`Attempt ${attempts} failed for ${company.name} [slug: ${slug}]:`, fetchErr.message);
             if (attempts < 3) {
               const backoffDelay = 1000 * Math.pow(3, attempts - 1); // 1s, 3s, 9s...
               await new Promise(r => setTimeout(r, backoffDelay));
