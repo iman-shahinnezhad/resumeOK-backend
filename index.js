@@ -54,7 +54,7 @@ app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), asyn
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    const { userId, creditsToAdd, newPlan } = session.metadata;
+    const { userId, creditsToAdd, newPlan } = session.metadata || {};
 
     if (userId && creditsToAdd) {
       try {
