@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 require('dotenv').config();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_relook_2026';
+const { verifyAppleIdToken } = require('./src/utils/AppleAuth');
 
 // --- PLUGGABLE ATS PROVIDERS ---
 const multer = require('multer');
@@ -94,6 +95,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, unique: true, sparse: true },
   password: { type: String },
   googleId: { type: String, unique: true, sparse: true },
+  appleId: { type: String, unique: true, sparse: true },
   avatar: { type: String },
   credit: { type: Number, default: 0 },
   plan: { type: String, default: 'Free' },
@@ -397,6 +399,56 @@ app.post('/api/auth/google', async (req, res) => {
   } catch (error) {
     console.error('Google Auth Error:', error);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// 3b. Apple Sign-In OAuth Verification Route
+app.post('/api/auth/apple', async (req, res) => {
+  const { identityToken, name } = req.body;
+  if (!identityToken) {
+    return res.status(400).json({ error: 'Identity token is required' });
+  }
+
+  try {
+    // Verify the identity token from Apple
+    const decoded = await verifyAppleIdToken(identityToken);
+    
+    const appleId = decoded.sub; // Unique Apple User ID
+    const email = decoded.email;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required from Apple token claims' });
+    }
+
+    let user = await User.findOne({ $or: [{ appleId }, { email }] });
+    if (!user) {
+      let fullName = 'Apple User';
+      if (name && (name.firstName || name.lastName)) {
+        fullName = `${name.firstName || ''} ${name.lastName || ''}`.trim();
+      }
+      
+      user = new User({
+        id: 'apple_' + appleId,
+        name: fullName,
+        email: email,
+        appleId: appleId,
+        plan: 'Free',
+        credit: 20, // 20 Welcome credits!
+        referralCode: generateReferralCode()
+      });
+      await user.save();
+    } else {
+      if (!user.appleId) {
+        user.appleId = appleId;
+        await user.save();
+      }
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ success: true, token, user });
+  } catch (error) {
+    console.error('Apple Auth Error:', error);
+    res.status(500).json({ error: error.message || 'Server error' });
   }
 });
 
