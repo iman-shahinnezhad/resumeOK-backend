@@ -28,6 +28,7 @@ Provide a JSON response with the following keys:
 2. "matchingSkills": an array of strings representing technologies, tools, or concepts from the job description that the resume explicitly or implicitly possesses.
 3. "missingSkills": an array of objects, where each object has keys "skill" (the name of the technology or concept missing) and "explanation" (a brief tip on what it is and how they can bridge this gap).
 4. "coverLetter": a professional, personalized cover letter tailored specifically to this job, highlighting the candidate's matching strengths and expressing interest.
+5. "tailoredResumeHtml": the candidate's resume rewritten and tailored strictly in clean HTML format (start with <div> and end with </div>) to optimize keywords and achievement phrasing naturally to match the job description. Do NOT include markdown code blocks.
 
 Return ONLY a valid JSON object. Do not include markdown wraps (like \`\`\`json).
 `;
@@ -67,7 +68,8 @@ Return ONLY a valid JSON object. Do not include markdown wraps (like \`\`\`json)
         score: typeof result.score === 'number' ? result.score : 50,
         matchingSkills: Array.isArray(result.matchingSkills) ? result.matchingSkills : [],
         missingSkills: Array.isArray(result.missingSkills) ? result.missingSkills : [],
-        coverLetter: result.coverLetter || 'Failed to generate cover letter.'
+        coverLetter: result.coverLetter || 'Failed to generate cover letter.',
+        tailoredResumeHtml: result.tailoredResumeHtml || ''
       };
     } catch (e) {
       console.error('Error in AiMatchingService:', e);
@@ -76,7 +78,8 @@ Return ONLY a valid JSON object. Do not include markdown wraps (like \`\`\`json)
         score: 50,
         matchingSkills: [],
         missingSkills: [{ skill: 'N/A', explanation: 'Failed to analyze resume with AI.' }],
-        coverLetter: 'Failed to generate cover letter due to an API error.'
+        coverLetter: 'Failed to generate cover letter due to an API error.',
+        tailoredResumeHtml: ''
       };
     }
   }
