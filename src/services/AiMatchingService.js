@@ -11,8 +11,15 @@ class AiMatchingService {
    */
   async matchResume(job, resumeText, resumeBase64) {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY is not configured in environment variables.');
+    if (!apiKey || apiKey.startsWith('AQ.Ab8RN6L') || apiKey.includes('PLACEHOLDER') || apiKey.includes('YOUR_API_KEY')) {
+      console.log('Skipping backend Gemini call: API key is invalid, empty, or deactivated.');
+      return {
+        score: 50,
+        matchingSkills: [],
+        missingSkills: [{ skill: 'N/A', explanation: 'Failed to analyze resume with AI (API Key not configured).' }],
+        coverLetter: 'Failed to generate cover letter because the server API Key is not configured.',
+        tailoredResumeHtml: ''
+      };
     }
     const promptText = `
 You are an expert recruiter and career coach.
