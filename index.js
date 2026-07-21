@@ -647,7 +647,7 @@ app.post('/api/credits/deduct', async (req, res) => {
       const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) {
-      return res.status(401).json({ error: 'Invalid Token' });
+      console.log('JWT verification failed in deduct, falling back to guest:', e.message);
     }
   }
 
@@ -692,7 +692,7 @@ app.post('/api/credits/refund', async (req, res) => {
       const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
       userId = decoded.id;
     } catch (e) {
-      return res.status(401).json({ error: 'Invalid Token' });
+      console.log('JWT verification failed in refund, falling back to guest:', e.message);
     }
   }
 
