@@ -303,6 +303,7 @@ const verifyPassword = (password, storedPassword) => {
   return hash === checkHash;
 };
 
+/*
 // 1. Email Register Route
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
@@ -451,6 +452,7 @@ app.post('/api/auth/apple', async (req, res) => {
     res.status(500).json({ error: error.message || 'Server error' });
   }
 });
+*/
 
 // 4. Update Profile & Password Route
 app.post('/api/auth/update', async (req, res) => {
@@ -1248,6 +1250,53 @@ app.get('/api/app-config', (req, res) => {
     minVersion: '2.0.1',
     trackViewUrl: 'https://apps.apple.com/app/resumeok-ai-resume-builder/id6783382482'
   });
+});
+
+// Generic Gemini API Proxy Endpoint
+const secureAiRateLimiter = rateLimiter(15, 60 * 1000); // 15 requests per minute
+app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({
+      error: {
+        message: 'Gemini API Key is not configured on the server.'
+      }
+    });
+  }
+
+  // Validate that the key on the server isn't fake/placeholder
+  if (apiKey.startsWith('AQ.Ab8RN6L') || apiKey.includes('PLACEHOLDER') || apiKey.includes('YOUR_API_KEY')) {
+    return res.status(400).json({
+      error: {
+        message: 'The Gemini API Key configured on the server is invalid or deactivated. Please contact the administrator.'
+      }
+    });
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(req.body)
+      }
+    );
+
+    const responseStatus = response.status;
+    const data = await response.json();
+    
+    res.status(responseStatus).json(data);
+  } catch (error) {
+    console.error('Error proxying Gemini API request:', error);
+    res.status(500).json({
+      error: {
+        message: error.message || 'Failed to communicate with Gemini API'
+      }
+    });
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
