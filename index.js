@@ -1245,7 +1245,8 @@ app.get('/api/app-config', (req, res) => {
   res.json({
     latestVersion: '2.0.4',
     minVersion: '2.0.1',
-    trackViewUrl: 'https://apps.apple.com/app/resumeok-ai-resume-builder/id6783382482'
+    trackViewUrl: 'https://apps.apple.com/app/resumeok-ai-resume-builder/id6783382482',
+    googleClientId: process.env.GOOGLE_CLIENT_ID || ''
   });
 });
 
