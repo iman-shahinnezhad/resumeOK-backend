@@ -302,8 +302,6 @@ const verifyPassword = (password, storedPassword) => {
   const checkHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
   return hash === checkHash;
 };
-
-/*
 // 1. Email Register Route
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
@@ -452,7 +450,6 @@ app.post('/api/auth/apple', async (req, res) => {
     res.status(500).json({ error: error.message || 'Server error' });
   }
 });
-*/
 
 // 4. Update Profile & Password Route
 app.post('/api/auth/update', async (req, res) => {
