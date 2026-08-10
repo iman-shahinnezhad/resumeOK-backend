@@ -826,12 +826,13 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
   try {
     const query = { isExpired: false };
 
-    // 2. High Performance User Exclusion Filter (Excludes Applied & Rejected Jobs)
+    // 2. High Performance User Exclusion Filter (Excludes Applied, Skipped & Rejected Jobs)
     if (userId) {
-      const userJobDoc = await UserJob.findOne({ userId }, { 'appliedJobs.jobId': 1, 'rejectedJobs.jobId': 1 }).lean();
+      const userJobDoc = await UserJob.findOne({ userId }, { 'appliedJobs.jobId': 1, 'skippedJobs.jobId': 1, 'rejectedJobs.jobId': 1 }).lean();
       if (userJobDoc) {
         const excludedIds = [
           ...(userJobDoc.appliedJobs || []).map(j => String(j.jobId)),
+          ...(userJobDoc.skippedJobs || []).map(j => String(j.jobId)),
           ...(userJobDoc.rejectedJobs || []).map(j => String(j.jobId))
         ].filter(Boolean);
         if (excludedIds.length > 0) {
@@ -1318,19 +1319,24 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
   }
 });
 
-// --- USER JOBS API (APPLIED & REJECTED SYNC) ---
+// --- USER JOBS API (APPLIED & SKIPPED SYNC) ---
 
-// 1. GET user applied & rejected jobs
+// 1. GET user applied & skipped jobs
 app.get('/api/user-jobs/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     let doc = await UserJob.findOne({ userId });
     if (!doc) {
-      doc = { userId, appliedJobs: [], rejectedJobs: [] };
+      doc = { userId, appliedJobs: [], skippedJobs: [], rejectedJobs: [] };
     }
+    const skippedList = (doc.skippedJobs && doc.skippedJobs.length > 0) 
+      ? doc.skippedJobs 
+      : (doc.rejectedJobs || []);
+
     res.json({
       appliedJobs: doc.appliedJobs || [],
-      rejectedJobs: doc.rejectedJobs || []
+      skippedJobs: skippedList,
+      rejectedJobs: skippedList
     });
   } catch (err) {
     console.error('Error fetching user jobs:', err);
@@ -1338,19 +1344,19 @@ app.get('/api/user-jobs/:userId', async (req, res) => {
   }
 });
 
-// 2. POST update user applied or rejected job
+// 2. POST update user applied or skipped job
 app.post('/api/user-jobs/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { type, jobId, jobData } = req.body;
 
     if (!type || !jobId) {
-      return res.status(400).json({ error: 'type (applied|rejected) and jobId are required' });
+      return res.status(400).json({ error: 'type (applied|skipped|rejected) and jobId are required' });
     }
 
     let doc = await UserJob.findOne({ userId });
     if (!doc) {
-      doc = new UserJob({ userId, appliedJobs: [], rejectedJobs: [] });
+      doc = new UserJob({ userId, appliedJobs: [], skippedJobs: [], rejectedJobs: [] });
     }
 
     const newJob = {
@@ -1364,17 +1370,20 @@ app.post('/api/user-jobs/:userId', async (req, res) => {
     };
 
     if (type === 'applied') {
+      doc.skippedJobs = doc.skippedJobs.filter(j => j.jobId !== newJob.jobId);
       doc.rejectedJobs = doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId);
       doc.appliedJobs = [newJob, ...doc.appliedJobs.filter(j => j.jobId !== newJob.jobId)];
-    } else if (type === 'rejected') {
+    } else if (type === 'skipped' || type === 'rejected') {
       doc.appliedJobs = doc.appliedJobs.filter(j => j.jobId !== newJob.jobId);
+      doc.skippedJobs = [newJob, ...doc.skippedJobs.filter(j => j.jobId !== newJob.jobId)];
       doc.rejectedJobs = [newJob, ...doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId)];
     }
 
     doc.updatedAt = new Date();
     await doc.save();
 
-    res.json({ success: true, appliedJobs: doc.appliedJobs, rejectedJobs: doc.rejectedJobs });
+    const skippedList = doc.skippedJobs || doc.rejectedJobs;
+    res.json({ success: true, appliedJobs: doc.appliedJobs, skippedJobs: skippedList, rejectedJobs: skippedList });
   } catch (err) {
     console.error('Error updating user job status:', err);
     res.status(500).json({ error: 'Failed to update user job status' });

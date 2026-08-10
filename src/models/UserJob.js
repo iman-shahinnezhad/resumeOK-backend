@@ -13,6 +13,17 @@ const userJobSchema = new mongoose.Schema({
       timestamp: { type: Number, default: Date.now }
     }
   ],
+  skippedJobs: [
+    {
+      jobId: { type: String, required: true },
+      title: { type: String },
+      companyName: { type: String },
+      location: { type: String },
+      url: { type: String },
+      date: { type: String },
+      timestamp: { type: Number, default: Date.now }
+    }
+  ],
   rejectedJobs: [
     {
       jobId: { type: String, required: true },
