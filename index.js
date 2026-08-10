@@ -21,6 +21,7 @@ const CompanyDiscoveryService = require('./src/services/CompanyDiscoveryService'
 
 // --- DATABASE JOBS AND BACKGROUND WORKERS ---
 const DbJob = require('./src/models/DbJob');
+const UserJob = require('./src/models/UserJob');
 const BackgroundWorkers = require('./src/workers/BackgroundWorkers');
 const CacheService = require('./src/services/CacheService');
 const AiMatchingService = require('./src/services/AiMatchingService');
@@ -415,12 +416,17 @@ app.post('/api/auth/apple', async (req, res) => {
     const appleId = decoded.sub; // Unique Apple User ID
     const email = decoded.email;
 
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required from Apple token claims' });
+    // 1. Search by appleId first (Apple guarantees sub is persistent across all sign-ins)
+    let user = await User.findOne({ appleId });
+
+    // 2. If not found by appleId, try finding by email if present
+    if (!user && email) {
+      user = await User.findOne({ email });
     }
 
-    let user = await User.findOne({ $or: [{ appleId }, { email }] });
+    // 3. If user still does not exist, register a new account
     if (!user) {
+      const userEmail = email || `apple_${appleId.substring(0, 10)}@privaterelay.appleid.com`;
       let fullName = 'Apple User';
       if (name && (name.firstName || name.lastName)) {
         fullName = `${name.firstName || ''} ${name.lastName || ''}`.trim();
@@ -429,7 +435,7 @@ app.post('/api/auth/apple', async (req, res) => {
       user = new User({
         id: 'apple_' + appleId,
         name: fullName,
-        email: email,
+        email: userEmail,
         appleId: appleId,
         plan: 'Free',
         credit: 20, // 20 Welcome credits!
@@ -437,6 +443,7 @@ app.post('/api/auth/apple', async (req, res) => {
       });
       await user.save();
     } else {
+      // If user was found by email, attach appleId if missing
       if (!user.appleId) {
         user.appleId = appleId;
         await user.save();
@@ -807,7 +814,7 @@ const applyRateLimiter = rateLimiter(5, 60 * 1000); // 5 per min
 
 // Fetch merged job listings directly from MongoDB Job persistence collection with search features
 app.get('/api/jobs', searchRateLimiter, async (req, res) => {
-  const { q, remote, location, company, provider, skills, sortBy, page, limit, lastCreatedAt } = req.query;
+  const { q, remote, location, company, provider, skills, sortBy, page, limit, lastCreatedAt, userId } = req.query;
 
   // 1. Check Query Cache
   const cacheKey = JSON.stringify(req.query);
@@ -819,7 +826,21 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
   try {
     const query = { isExpired: false };
 
-    // 2. Apply Filters
+    // 2. High Performance User Exclusion Filter (Excludes Applied & Rejected Jobs)
+    if (userId) {
+      const userJobDoc = await UserJob.findOne({ userId }, { 'appliedJobs.jobId': 1, 'rejectedJobs.jobId': 1 }).lean();
+      if (userJobDoc) {
+        const excludedIds = [
+          ...(userJobDoc.appliedJobs || []).map(j => String(j.jobId)),
+          ...(userJobDoc.rejectedJobs || []).map(j => String(j.jobId))
+        ].filter(Boolean);
+        if (excludedIds.length > 0) {
+          query.jobId = { $nin: excludedIds };
+        }
+      }
+    }
+
+    // 3. Apply Filters
     if (remote === 'true') {
       query.remote = true;
     }
@@ -841,7 +862,7 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       }
     }
 
-    // 3. Keyset (Cursor-based) Pagination for scalability
+    // 4. Keyset (Cursor-based) Pagination for scalability
     if (lastCreatedAt) {
       query.createdAt = { $lt: new Date(lastCreatedAt) };
     }
@@ -1294,6 +1315,95 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
         message: error.message || 'Failed to communicate with Gemini API'
       }
     });
+  }
+});
+
+// --- USER JOBS API (APPLIED & REJECTED SYNC) ---
+
+// 1. GET user applied & rejected jobs
+app.get('/api/user-jobs/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let doc = await UserJob.findOne({ userId });
+    if (!doc) {
+      doc = { userId, appliedJobs: [], rejectedJobs: [] };
+    }
+    res.json({
+      appliedJobs: doc.appliedJobs || [],
+      rejectedJobs: doc.rejectedJobs || []
+    });
+  } catch (err) {
+    console.error('Error fetching user jobs:', err);
+    res.status(500).json({ error: 'Failed to fetch user jobs' });
+  }
+});
+
+// 2. POST update user applied or rejected job
+app.post('/api/user-jobs/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { type, jobId, jobData } = req.body;
+
+    if (!type || !jobId) {
+      return res.status(400).json({ error: 'type (applied|rejected) and jobId are required' });
+    }
+
+    let doc = await UserJob.findOne({ userId });
+    if (!doc) {
+      doc = new UserJob({ userId, appliedJobs: [], rejectedJobs: [] });
+    }
+
+    const newJob = {
+      jobId: String(jobId),
+      title: jobData?.title || 'Job Title',
+      companyName: jobData?.companyName || 'Company',
+      location: jobData?.location || 'Remote',
+      url: jobData?.url || '',
+      date: jobData?.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      timestamp: jobData?.timestamp || Date.now()
+    };
+
+    if (type === 'applied') {
+      doc.rejectedJobs = doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId);
+      doc.appliedJobs = [newJob, ...doc.appliedJobs.filter(j => j.jobId !== newJob.jobId)];
+    } else if (type === 'rejected') {
+      doc.appliedJobs = doc.appliedJobs.filter(j => j.jobId !== newJob.jobId);
+      doc.rejectedJobs = [newJob, ...doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId)];
+    }
+
+    doc.updatedAt = new Date();
+    await doc.save();
+
+    res.json({ success: true, appliedJobs: doc.appliedJobs, rejectedJobs: doc.rejectedJobs });
+  } catch (err) {
+    console.error('Error updating user job status:', err);
+    res.status(500).json({ error: 'Failed to update user job status' });
+  }
+});
+
+// 3. DELETE remove job application
+app.delete('/api/user-jobs/:userId/job/:jobId', async (req, res) => {
+  try {
+    const { userId, jobId } = req.params;
+    const { type } = req.query;
+
+    let doc = await UserJob.findOne({ userId });
+    if (doc) {
+      if (type === 'applied') {
+        doc.appliedJobs = doc.appliedJobs.filter(j => j.jobId !== jobId);
+      } else if (type === 'rejected') {
+        doc.rejectedJobs = doc.rejectedJobs.filter(j => j.jobId !== jobId);
+      } else {
+        doc.appliedJobs = doc.appliedJobs.filter(j => j.jobId !== jobId);
+        doc.rejectedJobs = doc.rejectedJobs.filter(j => j.jobId !== jobId);
+      }
+      doc.updatedAt = new Date();
+      await doc.save();
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting user job:', err);
+    res.status(500).json({ error: 'Failed to delete user job' });
   }
 });
 

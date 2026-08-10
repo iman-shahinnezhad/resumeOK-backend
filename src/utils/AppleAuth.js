@@ -34,8 +34,7 @@ function verifyAppleIdToken(identityToken) {
       getApplePublicKey,
       {
         algorithms: ['RS256'],
-        issuer: 'https://appleid.apple.com',
-        audience: 'com.pixflow.resumeok' // iOS app bundle ID
+        issuer: 'https://appleid.apple.com'
       },
       (err, decoded) => {
         if (err) {
