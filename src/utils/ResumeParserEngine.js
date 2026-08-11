@@ -137,6 +137,7 @@ function validateAndRepairParsedProfile(parsed) {
  * Hybrid Text + Multimodal Vision Resume Parser Engine
  */
 async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
+  const apiKey = process.env.GEMINI_API_KEY;
   let buffer;
   let base64String;
   if (Buffer.isBuffer(bufferOrBase64)) {
