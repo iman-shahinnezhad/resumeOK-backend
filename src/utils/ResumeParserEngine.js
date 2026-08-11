@@ -88,9 +88,17 @@ function validateAndRepairParsedProfile(parsed) {
   }
 
   if (repaired.phone) {
-    const ph = String(repaired.phone);
-    if (/^0+$/.test(ph) || /^0000/.test(ph) || ph.length < 7 || ph.length > 18) {
+    const ph = String(repaired.phone).trim();
+    if (/^0+$/.test(ph) || /^0000/.test(ph) || ph.length < 7 || ph.length > 20) {
       repaired.phone = undefined;
+    }
+  }
+
+  if (!repaired.phone && repaired.rawText) {
+    const phoneMatch = repaired.rawText.match(/\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/) ||
+                       repaired.rawText.match(/\b\d{10}\b/);
+    if (phoneMatch) {
+      repaired.phone = phoneMatch[0].trim();
     }
   }
 
