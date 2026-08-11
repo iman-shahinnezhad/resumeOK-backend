@@ -145,13 +145,14 @@ async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
   const rawText = pdfData.text || '';
   const quality = isReliablePdfText(rawText);
 
-  console.log(`[PDF PARSER] Text extraction length: ${rawText.length}`);
-  console.log(`[PDF PARSER] Readable text ratio: ${quality.readableRatio.toFixed(2)}`);
-  console.log(`[PDF PARSER] Garbage ratio: ${quality.garbageRatio.toFixed(2)}`);
-  console.log(`[PDF PARSER] Extraction quality: ${quality.isReliable ? 'GOOD' : 'BAD'}`);
-  console.log(`[PDF PARSER] Parsing strategy: ${quality.isReliable ? 'TEXT' : 'VISION'}`);
-
-  const apiKey = process.env.GEMINI_API_KEY;
+  console.log(`\n===============================================================`);
+  console.log(`📄 [SERVER RESUME ENGINE] Starting PDF processing for: ${fileName}`);
+  console.log(`===============================================================`);
+  console.log(`[SERVER ENGINE LOG 1] Input Buffer/Base64 Size: ${base64String.length}`);
+  console.log(`[SERVER ENGINE LOG 2] pdf-parse Extracted Text Length: ${rawText.length}`);
+  console.log(`[SERVER ENGINE LOG 3] Extracted Text Snippet:\n"${rawText.substring(0, 300).replace(/\n/g, ' ')}..."`);
+  console.log(`[SERVER ENGINE LOG 4] Quality Metrics:`, JSON.stringify(quality));
+  console.log(`[SERVER ENGINE LOG 5] Server Gemini API Key configured: ${!!apiKey}`);
 
   const jsonSchemaPrompt = `
 {
@@ -188,8 +189,8 @@ async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
 `.trim();
 
   // Strategy 1: VISION Multimodal PDF Parsing
-  if (!quality.isReliable && apiKey) {
-    console.log(`[PDF PARSER] Text extraction corrupted (${quality.reason}). Switching to Gemini Vision Multimodal Parsing...`);
+  if (apiKey) {
+    console.log(`[SERVER ENGINE LOG 6] Invoking Server Gemini Multimodal PDF Vision Parser...`);
     try {
       const visionPrompt = `
 You are an expert AI Resume Vision Parser. Visually inspect all pages of this candidate's resume PDF document and extract all structured profile details into JSON matching this exact schema:
@@ -234,6 +235,7 @@ CRITICAL VISION PARSING RULES:
 
       for (const model of modelNames) {
         try {
+          console.log(`[SERVER ENGINE LOG 7] Trying Gemini Vision Endpoint for model: ${model}`);
           const res = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
             {
@@ -243,10 +245,16 @@ CRITICAL VISION PARSING RULES:
             }
           );
           if (res.ok) {
+            console.log(`[SERVER ENGINE LOG 8] Gemini Vision Endpoint HTTP SUCCESS 200 for model ${model}!`);
             visionResponse = res;
             break;
+          } else {
+            const errBody = await res.text();
+            console.log(`[SERVER ENGINE LOG 8-ERROR] Gemini Vision model ${model} HTTP ${res.status}:`, errBody);
           }
-        } catch (mErr) {}
+        } catch (mErr) {
+          console.log(`[SERVER ENGINE LOG 8-EXC] Fetch exception for ${model}:`, mErr.message);
+        }
       }
 
       if (visionResponse && visionResponse.ok) {
