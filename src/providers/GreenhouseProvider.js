@@ -16,6 +16,9 @@ class GreenhouseProvider extends JobProvider {
       const url = `https://boards-api.greenhouse.io/v1/boards/${companySlug}/jobs?content=true`;
       const response = await fetch(url);
       if (!response.ok) {
+        if (response.status === 404 || response.status === 410 || response.status === 403) {
+          return [];
+        }
         throw new Error(`Failed to fetch Greenhouse jobs for ${companySlug}: status ${response.status}`);
       }
       const data = await response.json();

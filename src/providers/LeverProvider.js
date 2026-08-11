@@ -16,6 +16,9 @@ class LeverProvider extends JobProvider {
       const url = `https://api.lever.co/v0/postings/${companySlug}?mode=json`;
       const response = await fetch(url);
       if (!response.ok) {
+        if (response.status === 404 || response.status === 410 || response.status === 403) {
+          return [];
+        }
         throw new Error(`Failed to fetch Lever jobs for ${companySlug}: status ${response.status}`);
       }
       const data = await response.json();
