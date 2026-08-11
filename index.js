@@ -1429,29 +1429,23 @@ app.post('/api/user-jobs/:userId', async (req, res) => {
 
     const newJob = {
       jobId: String(jobId),
-      title: jobData?.title || 'Job Title',
-      companyName: jobData?.companyName || 'Company',
-      location: jobData?.location || 'Remote',
-      url: jobData?.url || '',
-      date: jobData?.date || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       timestamp: jobData?.timestamp || Date.now()
     };
 
     if (type === 'applied') {
-      doc.skippedJobs = doc.skippedJobs.filter(j => j.jobId !== newJob.jobId);
-      doc.rejectedJobs = doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId);
-      doc.appliedJobs = [newJob, ...doc.appliedJobs.filter(j => j.jobId !== newJob.jobId)];
+      doc.skippedJobs = doc.skippedJobs.filter(j => String(j.jobId) !== newJob.jobId);
+      doc.rejectedJobs = doc.rejectedJobs.filter(j => String(j.jobId) !== newJob.jobId);
+      doc.appliedJobs = [newJob, ...doc.appliedJobs.filter(j => String(j.jobId) !== newJob.jobId)];
     } else if (type === 'skipped' || type === 'rejected') {
-      doc.appliedJobs = doc.appliedJobs.filter(j => j.jobId !== newJob.jobId);
-      doc.skippedJobs = [newJob, ...doc.skippedJobs.filter(j => j.jobId !== newJob.jobId)];
-      doc.rejectedJobs = [newJob, ...doc.rejectedJobs.filter(j => j.jobId !== newJob.jobId)];
+      doc.appliedJobs = doc.appliedJobs.filter(j => String(j.jobId) !== newJob.jobId);
+      doc.skippedJobs = [newJob, ...doc.skippedJobs.filter(j => String(j.jobId) !== newJob.jobId)];
+      doc.rejectedJobs = [newJob, ...doc.rejectedJobs.filter(j => String(j.jobId) !== newJob.jobId)];
     }
 
     doc.updatedAt = new Date();
     await doc.save();
 
-    const skippedList = doc.skippedJobs || doc.rejectedJobs;
-    res.json({ success: true, appliedJobs: doc.appliedJobs, skippedJobs: skippedList, rejectedJobs: skippedList });
+    res.json({ success: true });
   } catch (err) {
     console.error('Error updating user job status:', err);
     res.status(500).json({ error: 'Failed to update user job status' });
