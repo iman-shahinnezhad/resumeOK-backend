@@ -17,6 +17,7 @@
     "jwks-rsa": "^4.1.0",
     "mongoose": "^8.4.0",
     "multer": "^2.2.0",
+    "pdf-parse": "^2.4.5",
     "stripe": "^22.3.0"
   },
   "devDependencies": {

@@ -1317,6 +1317,38 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
       }
     });
   }
+// --- HIGH ACCURACY RESUME PARSING API ---
+const { parseResumeBuffer } = require('./src/utils/ResumeParserEngine');
+
+app.post('/api/parse-resume', async (req, res) => {
+  try {
+    const { base64Data, fileName } = req.body;
+    if (!base64Data) {
+      return res.status(400).json({ error: 'base64Data parameter is required' });
+    }
+
+    const parsedData = await parseResumeBuffer(base64Data, fileName || 'resume.pdf');
+    console.log('\n===============================================================');
+    console.log(`📄 [SERVER RESUME PARSED] File: ${fileName || 'resume.pdf'}`);
+    console.log('===============================================================');
+    console.log('📛 Full Name:', parsedData.fullName);
+    console.log('👤 First Name:', parsedData.firstName);
+    console.log('👤 Last Name:', parsedData.lastName);
+    console.log('📧 Email:', parsedData.email);
+    console.log('📞 Phone:', parsedData.phone);
+    console.log('📍 Location:', parsedData.location);
+    console.log('🔗 LinkedIn:', parsedData.linkedinUrl);
+    console.log('🌐 Portfolio:', parsedData.portfolioUrl);
+    console.log('💼 Target Role:', parsedData.targetRole);
+    console.log('⭐ Experience Level:', parsedData.experienceLevel);
+    console.log('🛠️ Skills Extracted:', parsedData.skills.join(', '));
+    console.log('===============================================================\n');
+
+    res.json({ success: true, parsed: parsedData });
+  } catch (err) {
+    console.error('Error parsing resume PDF:', err);
+    res.status(500).json({ error: 'Failed to parse resume PDF file' });
+  }
 });
 
 // --- USER JOBS API (APPLIED & SKIPPED SYNC) ---
