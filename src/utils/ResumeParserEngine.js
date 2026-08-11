@@ -77,22 +77,33 @@ RESUME TEXT:
 ${rawText}
 `.trim();
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }],
-            generationConfig: {
-              temperature: 0.1,
-              responseMimeType: "application/json"
-            }
-          })
-        }
-      );
+      let response = null;
+      const modelNames = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash-exp'];
 
-      if (response.ok) {
+      for (const model of modelNames) {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }],
+                generationConfig: {
+                  temperature: 0.1,
+                  responseMimeType: "application/json"
+                }
+              })
+            }
+          );
+          if (res.ok) {
+            response = res;
+            break;
+          }
+        } catch (mErr) {}
+      }
+
+      if (response && response.ok) {
         const resData = await response.json();
         const candidateText = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (candidateText) {
