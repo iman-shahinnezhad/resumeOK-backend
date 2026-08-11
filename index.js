@@ -1321,22 +1321,90 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
 
 // --- USER JOBS API (APPLIED & SKIPPED SYNC) ---
 
-// 1. GET user applied & skipped jobs
+// 1. GET user applied & skipped jobs (populated from DbJob with auto-prune of expired jobs)
 app.get('/api/user-jobs/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     let doc = await UserJob.findOne({ userId });
     if (!doc) {
-      doc = { userId, appliedJobs: [], skippedJobs: [], rejectedJobs: [] };
+      return res.json({ appliedJobs: [], skippedJobs: [], rejectedJobs: [] });
     }
-    const skippedList = (doc.skippedJobs && doc.skippedJobs.length > 0) 
-      ? doc.skippedJobs 
-      : (doc.rejectedJobs || []);
+
+    const rawApplied = doc.appliedJobs || [];
+    const rawSkipped = (doc.skippedJobs && doc.skippedJobs.length > 0) ? doc.skippedJobs : (doc.rejectedJobs || []);
+
+    const allJobIds = Array.from(new Set([
+      ...rawApplied.map(j => String(j.jobId)),
+      ...rawSkipped.map(j => String(j.jobId))
+    ])).filter(Boolean);
+
+    // Fetch active DbJob records from collection
+    const activeDbJobs = await DbJob.find(
+      { jobId: { $in: allJobIds }, isExpired: false },
+      { jobId: 1, title: 1, company: 1, location: 1, applicationUrl: 1, createdAt: 1 }
+    ).lean();
+
+    const dbJobMap = new Map();
+    activeDbJobs.forEach(job => {
+      dbJobMap.set(String(job.jobId), job);
+    });
+
+    // Populate active applied jobs
+    const validApplied = [];
+    const validAppliedIds = new Set();
+    for (const item of rawApplied) {
+      const jId = String(item.jobId);
+      const dbJob = dbJobMap.get(jId);
+      if (dbJob) {
+        validAppliedIds.add(jId);
+        validApplied.push({
+          id: jId,
+          jobId: jId,
+          title: dbJob.title || item.title,
+          companyName: dbJob.company || item.companyName,
+          location: dbJob.location || item.location,
+          url: dbJob.applicationUrl || item.url,
+          date: item.date || new Date(item.timestamp || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          timestamp: item.timestamp || Date.now(),
+          status: 'applied'
+        });
+      }
+    }
+
+    // Populate active skipped jobs
+    const validSkipped = [];
+    const validSkippedIds = new Set();
+    for (const item of rawSkipped) {
+      const jId = String(item.jobId);
+      const dbJob = dbJobMap.get(jId);
+      if (dbJob) {
+        validSkippedIds.add(jId);
+        validSkipped.push({
+          id: jId,
+          jobId: jId,
+          title: dbJob.title || item.title,
+          companyName: dbJob.company || item.companyName,
+          location: dbJob.location || item.location,
+          url: dbJob.applicationUrl || item.url,
+          date: item.date || new Date(item.timestamp || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          timestamp: item.timestamp || Date.now(),
+          status: 'skipped'
+        });
+      }
+    }
+
+    // Auto-prune expired / deleted jobs in background if any was invalid
+    if (validApplied.length !== rawApplied.length || validSkipped.length !== rawSkipped.length) {
+      doc.appliedJobs = doc.appliedJobs.filter(j => validAppliedIds.has(String(j.jobId)));
+      doc.skippedJobs = doc.skippedJobs.filter(j => validSkippedIds.has(String(j.jobId)));
+      doc.rejectedJobs = doc.rejectedJobs.filter(j => validSkippedIds.has(String(j.jobId)));
+      doc.save().catch(e => console.log('Auto-prune save error:', e));
+    }
 
     res.json({
-      appliedJobs: doc.appliedJobs || [],
-      skippedJobs: skippedList,
-      rejectedJobs: skippedList
+      appliedJobs: validApplied,
+      skippedJobs: validSkipped,
+      rejectedJobs: validSkipped
     });
   } catch (err) {
     console.error('Error fetching user jobs:', err);
