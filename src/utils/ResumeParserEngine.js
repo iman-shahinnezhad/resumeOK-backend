@@ -1,4 +1,7 @@
-const pdfParse = require('pdf-parse');
+let pdfParseLib = require('pdf-parse');
+if (typeof pdfParseLib !== 'function' && pdfParseLib && pdfParseLib.default) {
+  pdfParseLib = pdfParseLib.default;
+}
 
 const METADATA_BLACKLIST = /^(react-pdf|pdfkit|latex|ghostscript|adobe|wkhtmltopdf|canvas|tcpdf|fpdf|itext|creator|producer|title|author|subject|keywords|template|stockholm|untitled|document|page|font|devicergb|devicecmyk|identity-h|cidfont|xobject)$/i;
 
@@ -24,7 +27,7 @@ async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
     throw new Error('Invalid input for PDF parsing');
   }
 
-  const pdfData = await pdfParse(buffer);
+  const pdfData = typeof pdfParseLib === 'function' ? await pdfParseLib(buffer) : { text: '' };
   const rawText = pdfData.text || '';
   console.log(`📄 [PDF PARSER] Clean text extracted for ${fileName}. Length: ${rawText.length} characters.`);
 
