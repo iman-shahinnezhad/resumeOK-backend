@@ -77,6 +77,10 @@ RESUME TEXT:
 ${rawText}
 `.trim();
 
+      console.log("===== TEXT SENT TO GEMINI =====");
+      console.log(rawText);
+      console.log("===== END GEMINI INPUT =====");
+
       let response = null;
       const modelNames = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash-exp'];
 
@@ -106,6 +110,10 @@ ${rawText}
       if (response && response.ok) {
         const resData = await response.json();
         const candidateText = resData?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        console.log("===== RAW GEMINI RESPONSE =====");
+        console.log(candidateText || JSON.stringify(resData, null, 2));
+        console.log("===== END GEMINI RESPONSE =====");
         if (candidateText) {
           const cleanJsonStr = candidateText.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
           const aiParsed = JSON.parse(cleanJsonStr);
