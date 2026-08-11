@@ -230,7 +230,7 @@ CRITICAL VISION PARSING RULES:
         }
       };
 
-      const modelNames = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash-exp'];
+      const modelNames = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.5-flash', 'gemini-flash'];
       let visionResponse = null;
 
       for (const model of modelNames) {
