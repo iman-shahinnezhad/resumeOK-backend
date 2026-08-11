@@ -81,7 +81,7 @@ ${rawText}
 `.trim();
 
       console.log("===== TEXT SENT TO GEMINI =====");
-      console.log(rawText);
+      console.log(promptText);
       console.log("===== END GEMINI INPUT =====");
 
       let response = null;
