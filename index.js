@@ -1317,6 +1317,8 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
       }
     });
   }
+});
+
 // --- HIGH ACCURACY RESUME PARSING API ---
 const { parseResumeBuffer } = require('./src/utils/ResumeParserEngine');
 
