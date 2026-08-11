@@ -177,6 +177,17 @@ async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
   "experienceYears": 5,
   "experienceLevel": "Entry-level | 1-3 years | 3+ years | 5+ years | 7+ years",
   "skills": ["Skill 1", "Skill 2"],
+  "softSkills": ["Communication", "Problem Solving"],
+  "languages": ["English", "Spanish"],
+  "projects": [
+    {
+      "name": "Project Title",
+      "role": "Role",
+      "description": "Summary of project",
+      "technologies": ["Tech 1"],
+      "link": "https://..."
+    }
+  ],
   "workExperiences": [
     {
       "title": "Job Title",
