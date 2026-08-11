@@ -238,23 +238,11 @@ class BackgroundWorkers {
         // Upsert active jobs in local database
         for (const job of jobs) {
           try {
-            // Deduplication: Check if active job with same title, company, and location already exists (exact indexed match)
-            const exists = await DbJob.findOne({
-              company: company.name.toUpperCase(),
-              title: job.title.trim(),
-              location: job.location.trim(),
-              isExpired: false
-            });
-
-            const queryCond = exists 
-              ? { _id: exists._id }
-              : { provider: job.provider, jobId: job.id };
-
             await DbJob.findOneAndUpdate(
-              queryCond,
+              { provider: String(job.provider), jobId: String(job.id) },
               {
-                jobId: job.id,
-                provider: job.provider,
+                jobId: String(job.id),
+                provider: String(job.provider),
                 company: company.name.toUpperCase(),
                 title: job.title,
                 description: job.description,
@@ -271,10 +259,10 @@ class BackgroundWorkers {
                 isExpired: false,
                 lastSeenAt: scanStartTime
               },
-              { upsert: true }
+              { upsert: true, new: true }
             );
-          } catch (dbErr) {
-            console.error(`Failed to upsert job ${job.id} for ${company.name}:`, dbErr.message);
+          } catch (upsertErr) {
+            console.error(`Failed to upsert job ${job.id} for ${company.name}:`, upsertErr.message);
           }
         }
 
