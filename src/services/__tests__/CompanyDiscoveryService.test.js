@@ -92,4 +92,16 @@ describe('Company Discovery and ATS Detection Service', () => {
       expect(result.provider).toBe(tc.expected);
     });
   });
+
+  test('Should handle invalid or unparseable URLs gracefully without throwing', async () => {
+    const invalidResult = await CompanyDiscoveryService.detectATS('aaaaaaaaaaaaaaaaaaaa');
+    expect(invalidResult.provider).toBe('unknown');
+    expect(invalidResult.boardUrl).toBe('');
+  });
+
+  test('Should handle empty or null URL in detectATS', async () => {
+    const nullResult = await CompanyDiscoveryService.detectATS(null);
+    expect(nullResult.provider).toBe('unknown');
+  });
 });
+

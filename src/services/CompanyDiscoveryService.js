@@ -11,9 +11,18 @@ class CompanyDiscoveryService {
    */
   async crawlDomain(domainUrl) {
     try {
-      let formattedUrl = domainUrl;
-      if (!/^https?:\/\//i.test(domainUrl)) {
-        formattedUrl = `https://${domainUrl}`;
+      if (!domainUrl || typeof domainUrl !== 'string') {
+        return '';
+      }
+      let formattedUrl = domainUrl.trim();
+      if (!/^https?:\/\//i.test(formattedUrl)) {
+        formattedUrl = `https://${formattedUrl}`;
+      }
+
+      try {
+        new URL(formattedUrl);
+      } catch (_) {
+        return formattedUrl;
       }
 
       console.log(`Crawling domain: ${formattedUrl}`);
@@ -57,7 +66,11 @@ class CompanyDiscoveryService {
       return formattedUrl;
     } catch (e) {
       console.error(`Crawl error for domain ${domainUrl}:`, e);
-      return domainUrl;
+      let formattedUrl = domainUrl;
+      if (typeof domainUrl === 'string' && !/^https?:\/\//i.test(domainUrl)) {
+        formattedUrl = `https://${domainUrl}`;
+      }
+      return formattedUrl;
     }
   }
 
@@ -68,13 +81,29 @@ class CompanyDiscoveryService {
    */
   async detectATS(careerUrl) {
     try {
-      console.log(`Detecting ATS for career URL: ${careerUrl}`);
-      const res = await fetch(careerUrl, {
+      if (!careerUrl || typeof careerUrl !== 'string') {
+        return { provider: 'unknown', boardUrl: '' };
+      }
+
+      let formattedUrl = careerUrl.trim();
+      if (!/^https?:\/\//i.test(formattedUrl)) {
+        formattedUrl = `https://${formattedUrl}`;
+      }
+
+      try {
+        new URL(formattedUrl);
+      } catch (_) {
+        console.warn(`Invalid career URL format: ${careerUrl}`);
+        return { provider: 'unknown', boardUrl: '' };
+      }
+
+      console.log(`Detecting ATS for career URL: ${formattedUrl}`);
+      const res = await fetch(formattedUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
       });
       
-      const finalUrl = res.url || careerUrl;
-      const html = res.ok ? await res.text() : "";
+      const finalUrl = (res && res.url) ? res.url : formattedUrl;
+      const html = (res && res.ok && typeof res.text === 'function') ? await res.text() : "";
 
       // 1. Signature check on redirected Host URL
       const urlLower = finalUrl.toLowerCase();
