@@ -845,7 +845,7 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
     if (remote === 'true') {
       query.remote = true;
     }
-    if (location) {
+    if (location && location.trim() !== '' && !['all', 'all locations'].includes(location.trim().toLowerCase())) {
       query.location = new RegExp(location.trim(), 'i');
     }
     if (company) {
