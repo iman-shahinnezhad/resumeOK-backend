@@ -1,6 +1,6 @@
 {
   "name": "resumeok-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Secure Node.js backend for ResumeOK social authentication",
   "main": "index.js",
   "scripts": {
