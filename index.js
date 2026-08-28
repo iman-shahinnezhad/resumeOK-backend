@@ -1461,6 +1461,28 @@ app.post('/api/user-jobs/:userId', async (req, res) => {
       doc = new UserJob({ userId, appliedJobs: [], skippedJobs: [], rejectedJobs: [] });
     }
 
+    // Check if the job exists in DbJob. If not, auto-create a lazy ref so it is preserved in GET API
+    const existingDbJob = await DbJob.findOne({ jobId: String(jobId) });
+    if (!existingDbJob && jobData) {
+      try {
+        const newDbJob = new DbJob({
+          jobId: String(jobId),
+          provider: jobData.provider || 'greenhouse',
+          company: jobData.companyName || jobData.company || 'Company',
+          title: jobData.title || 'Job Title',
+          description: jobData.description || '',
+          location: typeof jobData.location === 'object' ? (jobData.location?.name || 'Remote') : (jobData.location || 'Remote'),
+          applicationUrl: jobData.url || jobData.applicationUrl || '',
+          canApplyDirectly: true,
+          isExpired: false
+        });
+        await newDbJob.save();
+        console.log(`[SERVER USER-JOBS] Auto-created DbJob record for jobId: ${jobId} during ${type} sync`);
+      } catch (dbErr) {
+        console.error(`[SERVER USER-JOBS] Failed to auto-create DbJob for jobId: ${jobId}`, dbErr.message);
+      }
+    }
+
     const newJob = {
       jobId: String(jobId),
       timestamp: jobData?.timestamp || Date.now()
