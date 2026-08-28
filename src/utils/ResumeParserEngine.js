@@ -250,7 +250,7 @@ CRITICAL VISION PARSING RULES:
         }
       };
 
-      const modelNames = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.5-flash', 'gemini-flash'];
+      const modelNames = ['gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-flash-latest'];
       let visionResponse = null;
 
       for (const model of modelNames) {
@@ -315,7 +315,7 @@ ${rawText}
       console.log(textPrompt);
       console.log("===== END GEMINI INPUT =====");
 
-      const modelNames = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash-exp'];
+      const modelNames = ['gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-flash-latest'];
       let response = null;
 
       for (const model of modelNames) {
