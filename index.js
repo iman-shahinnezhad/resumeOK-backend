@@ -142,6 +142,27 @@ app.post('/api/upload-pdf', async (req, res) => {
     const host = req.get('host') || `localhost:${PORT}`;
     const publicUrl = `${protocol}://${host}/uploads/${subPath}/${uniqueFileName}`;
 
+    // If userId provided, save record to MongoDB users collection
+    const { userId } = req.body;
+    if (userId) {
+      try {
+        await User.updateOne(
+          { id: userId },
+          {
+            $push: {
+              resumes: {
+                id: `resume_${Date.now()}`,
+                fileName: safeName,
+                url: publicUrl,
+                type: isCoverLetter ? 'cover-letter' : 'resume',
+                createdAt: new Date()
+              }
+            }
+          }
+        );
+      } catch (e) {}
+    }
+
     return res.json({
       success: true,
       url: publicUrl,
@@ -184,6 +205,15 @@ const userSchema = new mongoose.Schema({
   subscriptionExpiresAt: { type: Date },
   lastResetDate: { type: Date },
   appleOriginalTransactionId: { type: String, index: true, sparse: true },
+  resumes: [
+    {
+      id: { type: String },
+      fileName: { type: String },
+      url: { type: String },
+      type: { type: String, default: 'resume' },
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
   createdAt: { type: Date, default: Date.now }
 });
 
