@@ -79,6 +79,81 @@ app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), asyn
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// --- STATIC PDF FILE SERVING WITH CORS ---
+const uploadsDir = path.join(__dirname, 'uploads');
+const resumesDir = path.join(uploadsDir, 'resumes');
+const coverLettersDir = path.join(uploadsDir, 'cover-letters');
+
+async function ensureUploadDirs() {
+  try {
+    await fs.mkdir(uploadsDir, { recursive: true });
+    await fs.mkdir(resumesDir, { recursive: true });
+    await fs.mkdir(coverLettersDir, { recursive: true });
+  } catch (e) {}
+}
+ensureUploadDirs();
+
+app.use('/uploads', cors({ origin: '*' }), express.static(uploadsDir));
+
+// --- 30-DAY AUTO-CLEANUP WORKER ---
+async function cleanupExpiredPdfs() {
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const dirs = [resumesDir, coverLettersDir];
+
+  for (const dir of dirs) {
+    try {
+      const files = await fs.readdir(dir);
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const stat = await fs.stat(filePath);
+        if (now - stat.mtimeMs > THIRTY_DAYS_MS) {
+          await fs.unlink(filePath);
+          console.log(`[Auto-Cleanup] Deleted 30-day expired PDF file: ${file}`);
+        }
+      }
+    } catch (e) {}
+  }
+}
+// Run cleanup on boot and every 24 hours
+cleanupExpiredPdfs();
+setInterval(cleanupExpiredPdfs, 24 * 60 * 60 * 1000);
+
+// --- PDF UPLOAD ENDPOINT ---
+app.post('/api/upload-pdf', async (req, res) => {
+  try {
+    const { fileName, fileBase64, type } = req.body;
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'Missing fileBase64' });
+    }
+
+    const isCoverLetter = type === 'cover-letter';
+    const targetDir = isCoverLetter ? coverLettersDir : resumesDir;
+    const subPath = isCoverLetter ? 'cover-letters' : 'resumes';
+
+    const safeName = (fileName || (isCoverLetter ? 'Cover_Letter.pdf' : 'Resume.pdf')).replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const uniqueFileName = `${Date.now()}_${safeName}`;
+    const filePath = path.join(targetDir, uniqueFileName);
+
+    const buffer = Buffer.from(fileBase64, 'base64');
+    await fs.writeFile(filePath, buffer);
+
+    const protocol = req.protocol || 'http';
+    const host = req.get('host') || `localhost:${PORT}`;
+    const publicUrl = `${protocol}://${host}/uploads/${subPath}/${uniqueFileName}`;
+
+    return res.json({
+      success: true,
+      url: publicUrl,
+      fileName: safeName,
+      expiresInDays: 30
+    });
+  } catch (err) {
+    console.error('PDF Upload Error:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- MONGODB DATABASE SETUP ---
 const mongoose = require('mongoose');
 
