@@ -122,7 +122,7 @@ setInterval(cleanupExpiredPdfs, 24 * 60 * 60 * 1000);
 // --- PDF UPLOAD ENDPOINT ---
 app.post('/api/upload-pdf', async (req, res) => {
   try {
-    const { fileName, fileBase64, type } = req.body;
+    const { fileName, fileBase64, type, userId, jobId, companyName, jobTitle, coverLetterText } = req.body;
     if (!fileBase64) {
       return res.status(400).json({ error: 'Missing fileBase64' });
     }
@@ -143,7 +143,6 @@ app.post('/api/upload-pdf', async (req, res) => {
     const publicUrl = `${protocol}://${host}/uploads/${subPath}/${uniqueFileName}`;
 
     // If userId provided, save record to MongoDB users collection
-    const { userId } = req.body;
     if (userId) {
       try {
         let userDoc = await User.findOne({ id: userId });
@@ -156,17 +155,37 @@ app.post('/api/upload-pdf', async (req, res) => {
             referralCode: generateReferralCode()
           });
         }
-        userDoc.resumes.push({
-          id: `resume_${Date.now()}`,
-          fileName: safeName,
-          url: publicUrl,
-          type: isCoverLetter ? 'cover-letter' : 'resume',
-          createdAt: new Date()
-        });
+
+        if (isCoverLetter) {
+          if (!userDoc.coverLetters) userDoc.coverLetters = [];
+          userDoc.coverLetters.push({
+            id: `cl_${Date.now()}`,
+            fileName: safeName,
+            url: publicUrl,
+            coverLetterText: coverLetterText || '',
+            jobId: jobId || '',
+            companyName: companyName || '',
+            jobTitle: jobTitle || '',
+            createdAt: new Date()
+          });
+          console.log(`[PDF UPLOAD] Saved cover letter for user ${userId} (Job: ${companyName} - ${jobTitle}) to MongoDB`);
+        } else {
+          if (!userDoc.resumes) userDoc.resumes = [];
+          userDoc.resumes.push({
+            id: `resume_${Date.now()}`,
+            fileName: safeName,
+            url: publicUrl,
+            jobId: jobId || '',
+            companyName: companyName || '',
+            jobTitle: jobTitle || '',
+            isTailored: Boolean(jobId || companyName || jobTitle),
+            createdAt: new Date()
+          });
+          console.log(`[PDF UPLOAD] Saved resume for user ${userId} (Job: ${companyName} - ${jobTitle}) to MongoDB`);
+        }
         await userDoc.save();
-        console.log(`[PDF UPLOAD] Saved ${isCoverLetter ? 'cover-letter' : 'resume'} for user ${userId} to MongoDB`);
       } catch (e) {
-        console.error('MongoDB Save Resume Error:', e);
+        console.error('MongoDB Save Document Error:', e);
       }
     }
 
@@ -217,7 +236,22 @@ const userSchema = new mongoose.Schema({
       id: { type: String },
       fileName: { type: String },
       url: { type: String },
-      type: { type: String, default: 'resume' },
+      jobId: { type: String },
+      companyName: { type: String },
+      jobTitle: { type: String },
+      isTailored: { type: Boolean, default: false },
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
+  coverLetters: [
+    {
+      id: { type: String },
+      fileName: { type: String },
+      url: { type: String },
+      coverLetterText: { type: String },
+      jobId: { type: String },
+      companyName: { type: String },
+      jobTitle: { type: String },
       createdAt: { type: Date, default: Date.now }
     }
   ],
