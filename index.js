@@ -146,21 +146,28 @@ app.post('/api/upload-pdf', async (req, res) => {
     const { userId } = req.body;
     if (userId) {
       try {
-        await User.updateOne(
-          { id: userId },
-          {
-            $push: {
-              resumes: {
-                id: `resume_${Date.now()}`,
-                fileName: safeName,
-                url: publicUrl,
-                type: isCoverLetter ? 'cover-letter' : 'resume',
-                createdAt: new Date()
-              }
-            }
-          }
-        );
-      } catch (e) {}
+        let userDoc = await User.findOne({ id: userId });
+        if (!userDoc) {
+          userDoc = new User({
+            id: userId,
+            plan: 'Free',
+            credit: 0,
+            name: 'Guest User',
+            referralCode: generateReferralCode()
+          });
+        }
+        userDoc.resumes.push({
+          id: `resume_${Date.now()}`,
+          fileName: safeName,
+          url: publicUrl,
+          type: isCoverLetter ? 'cover-letter' : 'resume',
+          createdAt: new Date()
+        });
+        await userDoc.save();
+        console.log(`[PDF UPLOAD] Saved ${isCoverLetter ? 'cover-letter' : 'resume'} for user ${userId} to MongoDB`);
+      } catch (e) {
+        console.error('MongoDB Save Resume Error:', e);
+      }
     }
 
     return res.json({
