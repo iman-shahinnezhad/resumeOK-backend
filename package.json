@@ -1,7 +1,7 @@
 {
-  "name": "resumeok-backend",
+  "name": "applydesk-backend",
   "version": "1.0.2",
-  "description": "Secure Node.js backend for ResumeOK social authentication",
+  "description": "Secure Node.js backend for ApplyDesk social authentication",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

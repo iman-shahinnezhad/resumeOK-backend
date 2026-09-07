@@ -127,6 +127,18 @@ function validateAndRepairParsedProfile(parsed) {
     repaired.skills = [];
   }
 
+  if (Array.isArray(repaired.tools)) {
+    const uniqueTools = new Set();
+    for (const tool of repaired.tools) {
+      if (typeof tool === 'string' && tool.trim().length > 1) {
+        uniqueTools.add(tool.trim());
+      }
+    }
+    repaired.tools = Array.from(uniqueTools);
+  } else {
+    repaired.tools = [];
+  }
+
   if (!Array.isArray(repaired.workExperiences)) repaired.workExperiences = [];
   if (!Array.isArray(repaired.education)) repaired.education = [];
 
@@ -174,9 +186,11 @@ async function parseResumeBuffer(bufferOrBase64, fileName = 'resume.pdf') {
   "linkedinUrl": null,
   "portfolioUrl": null,
   "targetRole": "Candidate Title or Primary Role",
+  "summary": "Candidate professional summary or bio",
   "experienceYears": 5,
   "experienceLevel": "Entry-level | 1-3 years | 3+ years | 5+ years | 7+ years",
   "skills": ["Skill 1", "Skill 2"],
+  "tools": ["Git", "VS Code", "Figma", "Docker"],
   "softSkills": ["Communication", "Problem Solving"],
   "languages": ["English", "Spanish"],
   "projects": [

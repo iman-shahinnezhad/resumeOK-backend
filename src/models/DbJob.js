@@ -27,15 +27,18 @@ const dbJobSchema = new mongoose.Schema({
 // Unique compound index to prevent duplicate jobs
 dbJobSchema.index({ provider: 1, jobId: 1 }, { unique: true });
 
-// Index search queries
-dbJobSchema.index({ title: 'text', description: 'text', location: 'text' });
+// Weighted full-text search index for fast query matching without full table scans
+dbJobSchema.index(
+  { title: 'text', company: 'text', skills: 'text', description: 'text', location: 'text' },
+  { weights: { title: 10, company: 8, skills: 5, location: 3, description: 1 }, name: 'JobTextIndex' }
+);
 
-// Compound indexes for fast query filtering and sorting
-dbJobSchema.index({ isExpired: 1, createdAt: -1 });
-dbJobSchema.index({ isExpired: 1, remote: 1, location: 1 });
-dbJobSchema.index({ isExpired: 1, company: 1 });
-dbJobSchema.index({ isExpired: 1, provider: 1 });
-dbJobSchema.index({ isExpired: 1, skills: 1 });
+// High-speed compound indexes for queries, filtering, and pagination
+dbJobSchema.index({ isExpired: 1, createdAt: -1, _id: -1 });
+dbJobSchema.index({ isExpired: 1, remote: 1, createdAt: -1 });
+dbJobSchema.index({ isExpired: 1, company: 1, createdAt: -1 });
+dbJobSchema.index({ isExpired: 1, provider: 1, createdAt: -1 });
+dbJobSchema.index({ isExpired: 1, skills: 1, createdAt: -1 });
 dbJobSchema.index({ company: 1, title: 1, location: 1 });
 
 const DbJob = mongoose.model('DbJob', dbJobSchema);

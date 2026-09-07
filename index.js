@@ -201,6 +201,25 @@ app.post('/api/upload-pdf', async (req, res) => {
   }
 });
 
+// --- GET USER RESUMES AND COVER LETTERS FROM MONGODB ---
+app.get('/api/user/:userId/documents', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userDoc = await User.findOne({ id: userId });
+    if (!userDoc) {
+      return res.json({ success: true, resumes: [], coverLetters: [] });
+    }
+    return res.json({
+      success: true,
+      resumes: userDoc.resumes || [],
+      coverLetters: userDoc.coverLetters || []
+    });
+  } catch (err) {
+    console.error('Error fetching user documents:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- MONGODB DATABASE SETUP ---
 const mongoose = require('mongoose');
 
@@ -678,7 +697,7 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
             currency: 'usd',
             product_data: {
               name: packageName,
-              description: `Add ${credits} credits to your ResumeOK account`,
+              description: `Add ${credits} credits to your ApplyDesk account`,
             },
             unit_amount: Math.round(amount * 100), // In cents
           },
@@ -1032,42 +1051,82 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       sortOptions = { company: 1 };
     }
 
-    // 6. Pagination offset limits
+    // 6. High-performance pagination limits (prevents Node.js OOM crashes with millions of jobs)
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const limitNum = Math.max(0, parseInt(limit, 10) || 0); // 0 means return all matching jobs
+    const parsedLimit = parseInt(limit, 10);
+    const limitNum = isNaN(parsedLimit) ? 30 : (parsedLimit === 0 ? 50 : Math.min(100, Math.max(1, parsedLimit)));
     const skipNum = lastCreatedAt ? 0 : (pageNum - 1) * limitNum;
 
-    let cursor = DbJob.find(query, projection).sort(sortOptions);
-    if (limitNum > 0) {
-      cursor = cursor.skip(skipNum).limit(limitNum);
-    }
-
+    let cursor = DbJob.find(query, projection).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
     let jobs = await cursor;
 
-    // 7. Fuzzy/Regex fallback if full-text search yielded 0 results
+    // 7. Indexed fallback if full-text search yielded 0 results
     if (jobs.length === 0 && q && q.trim() !== '') {
-      console.log(`Text search returned 0 results. Running fuzzy regex fallback for: ${q}`);
-      const terms = q.trim().split(/\s+/).filter(t => t.length > 1);
-      if (terms.length > 0) {
-        delete query.$text;
-        query.$or = [
-          ...terms.map(t => ({ title: { $regex: t, $options: 'i' } })),
-          ...terms.map(t => ({ description: { $regex: t, $options: 'i' } })),
-          ...terms.map(t => ({ requirements: { $regex: t, $options: 'i' } }))
-        ];
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager']);
+      const allTerms = q.trim().toLowerCase().split(/\s+/).filter(t => t.length > 1);
+      const domainTerms = allTerms.filter(t => !SENIORITY.has(t));
+      const targetTerms = domainTerms.length > 0 ? domainTerms : allTerms;
 
-        let fallbackCursor = DbJob.find(query).sort({ createdAt: -1 });
-        if (limitNum > 0) {
-          fallbackCursor = fallbackCursor.skip(skipNum).limit(limitNum);
-        }
-        jobs = await fallbackCursor;
+      if (targetTerms.length > 0) {
+        delete query.$text;
+        const mainTerm = targetTerms[0];
+        query.title = new RegExp('^' + mainTerm, 'i');
+
+        jobs = await DbJob.find(query).sort({ createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
       }
     }
+
+    // 8. Domain relevance sorting: ensure domain role matches rank above generic level modifier matches
+    if (jobs.length > 0 && q && q.trim() !== '') {
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager']);
+      const qWords = q.trim().toLowerCase().split(/\s+/).filter(t => t.length > 1);
+      const domainWords = qWords.filter(w => !SENIORITY.has(w));
+
+      if (domainWords.length > 0) {
+        jobs.sort((a, b) => {
+          const aTitle = (a.title || '').toLowerCase();
+          const bTitle = (b.title || '').toLowerCase();
+
+          const aDomainScore = domainWords.filter(w => aTitle.includes(w)).length;
+          const bDomainScore = domainWords.filter(w => bTitle.includes(w)).length;
+
+          if (aDomainScore !== bDomainScore) {
+            return bDomainScore - aDomainScore;
+          }
+
+          const aAllMatch = qWords.filter(w => aTitle.includes(w)).length;
+          const bAllMatch = qWords.filter(w => bTitle.includes(w)).length;
+          return bAllMatch - aAllMatch;
+        });
+      }
+    }
+
+function extractSalaryFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+
+  const labelMatch = text.match(/(?:salary|compensation|base pay|pay range|remuneration|rate)\s*(?:range|rate)?\s*[:\-\=]?\s*([\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?|[\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?)/i);
+  if (labelMatch && labelMatch[1]) {
+    return labelMatch[1].trim();
+  }
+
+  const rangeMatch = text.match(/([\$€£¥]\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?(?:\s*(?:USD|EUR|GBP|CAD|AUD))?(?:\s*\/(?:yr|year|hr|hour|mo|month|annum))?)/i);
+  if (rangeMatch && rangeMatch[1]) {
+    return rangeMatch[1].trim();
+  }
+
+  const shortRangeMatch = text.match(/([\$€£¥]?\s*\d{2,3}\s*k\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}\s*k(?:\s*(?:USD|EUR|GBP))?)/i);
+  if (shortRangeMatch && shortRangeMatch[1]) {
+    return shortRangeMatch[1].trim();
+  }
+
+  return null;
+}
 
     // Map database jobs to legacy schema expected by client app
     const legacyJobs = jobs.map(job => {
       const content = job.description + 
         (job.requirements ? "\n\n" + job.requirements : "");
+      const extractedSalary = job.salary || extractSalaryFromText(content);
         
       return {
         id: job.jobId,
@@ -1079,6 +1138,10 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
         companyName: job.company,
         boardToken: job.company.toLowerCase(),
         sourceType: job.provider,
+        salary: extractedSalary,
+        employmentType: job.employmentType || "Full-time",
+        remote: job.remote || false,
+        postedAt: job.postedAt || job.createdAt,
         skills: job.skills || [],
         canApplyDirectly: job.canApplyDirectly,
         createdAt: job.createdAt
