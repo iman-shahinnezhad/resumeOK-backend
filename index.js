@@ -274,6 +274,7 @@ const userSchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now }
     }
   ],
+  profile: { type: Object, default: {} },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -282,6 +283,124 @@ const generateReferralCode = () => {
 };
 
 const User = mongoose.model('User', userSchema);
+
+const DEFAULT_CANDIDATE_PROFILE = {
+  firstName: 'Iman',
+  middleName: '',
+  lastName: 'Shahinnezhad',
+  prefFirstName: 'Iman',
+  prefMiddleName: '',
+  prefLastName: 'Shahinnezhad',
+  email: 'iman.shahinnezhad@gmail.com',
+  phoneType: 'Mobile',
+  phone: '+98 935 895 0641',
+  city: 'Tehran',
+  country: 'Iran',
+  addressLine: 'Valiasr St., Tehran, Iran',
+  schoolName: 'Sharif University of Technology',
+  degree: "Master's Degree",
+  discipline: 'Software Engineering',
+  eduStartDate: '09/2018',
+  eduEndDate: '06/2022',
+  companyName: 'ApplyDesk',
+  jobTitle: 'Senior Full Stack Engineer',
+  workStartDate: '01/2022',
+  workEndDate: 'Present',
+  workSummary: 'Leading full-stack React, Node.js, Express and AI chrome extension development.',
+  skills: 'React, TypeScript, Node.js, Express, Python, MongoDB, TailwindCSS, Chrome Extensions',
+  linkedinUrl: 'https://linkedin.com/in/imanshahinnezhad',
+  portfolioUrl: 'https://github.com/imanshahinnezhad',
+  gender: 'Male',
+  race: 'Asian',
+  veteranStatus: 'Not a Veteran',
+  disabilityStatus: 'No',
+  noticePeriod: 'Immediate',
+  salaryExpectation: '$120,000 / year'
+};
+
+// Auto Backfill MongoDB Users with Candidate Profile if missing
+async function backfillUserProfiles() {
+  try {
+    const users = await User.find({});
+    for (const u of users) {
+      if (!u.profile || !u.profile.firstName) {
+        u.profile = {
+          ...DEFAULT_CANDIDATE_PROFILE,
+          ...(u.profile || {}),
+          firstName: u.name && u.name !== 'Guest User' ? u.name.split(' ')[0] : DEFAULT_CANDIDATE_PROFILE.firstName,
+          lastName: u.name && u.name !== 'Guest User' ? (u.name.split(' ').slice(1).join(' ') || DEFAULT_CANDIDATE_PROFILE.lastName) : DEFAULT_CANDIDATE_PROFILE.lastName,
+          email: u.email || DEFAULT_CANDIDATE_PROFILE.email
+        };
+        await u.save();
+      }
+    }
+    console.log('MongoDB: All candidate profiles verified & synced!');
+  } catch(e) {
+    console.error('Mongo profile backfill error:', e);
+  }
+}
+
+if (process.env.MONGO_URI) {
+  mongoose.connection.once('open', () => {
+    backfillUserProfiles();
+  });
+}
+
+// --- USER PROFILE ENDPOINTS (SYNC BETWEEN WEB, APP & EXTENSION) ---
+app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
+  try {
+    const userId = req.params.userId || req.query.userId || 'default_user';
+    let userDoc = await User.findOne({ id: userId });
+    if (!userDoc) {
+      userDoc = await User.findOne({}); // Fallback to first user in Mongo if specific ID not found
+    }
+    return res.json({
+      success: true,
+      profile: (userDoc && userDoc.profile && userDoc.profile.firstName) ? userDoc.profile : DEFAULT_CANDIDATE_PROFILE
+    });
+  } catch (err) {
+    console.error('Error fetching user profile:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
+  try {
+    const userId = req.params.userId || req.body.userId || 'default_user';
+    const profile = req.body.profile || req.body;
+
+    let userDoc = await User.findOne({ id: userId });
+    if (!userDoc) {
+      // Find guest or fallback user
+      userDoc = await User.findOne({});
+    }
+
+    if (!userDoc) {
+      userDoc = new User({
+        id: userId,
+        name: `${profile?.firstName || 'Iman'} ${profile?.lastName || 'Shahinnezhad'}`.trim(),
+        email: profile?.email || 'iman.shahinnezhad@gmail.com',
+        profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(profile || {}) },
+        referralCode: generateReferralCode()
+      });
+    } else {
+      userDoc.profile = { ...DEFAULT_CANDIDATE_PROFILE, ...(userDoc.profile || {}), ...(profile || {}) };
+      if (profile?.email) userDoc.email = profile.email;
+      if (profile?.firstName || profile?.lastName) {
+        userDoc.name = `${profile?.firstName || ''} ${profile?.lastName || ''}`.trim();
+      }
+    }
+    await userDoc.save();
+    return res.json({
+      success: true,
+      message: 'Profile updated and synced successfully in MongoDB',
+      profile: userDoc.profile
+    });
+  } catch (err) {
+    console.error('Error saving user profile:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
 
 // Passive subscription verification & credit reset/expiry helper
 async function validateUserSubscription(user) {
