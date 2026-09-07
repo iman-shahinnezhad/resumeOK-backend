@@ -284,65 +284,44 @@ const generateReferralCode = () => {
 
 const User = mongoose.model('User', userSchema);
 
-const DEFAULT_CANDIDATE_PROFILE = {
-  firstName: 'Iman',
-  middleName: '',
-  lastName: 'Shahinnezhad',
-  prefFirstName: 'Iman',
-  prefMiddleName: '',
-  prefLastName: 'Shahinnezhad',
-  email: 'iman.shahinnezhad@gmail.com',
-  phoneType: 'Mobile',
-  phone: '+98 935 895 0641',
-  city: 'Tehran',
-  country: 'Iran',
-  addressLine: 'Valiasr St., Tehran, Iran',
-  schoolName: 'Sharif University of Technology',
-  degree: "Master's Degree",
-  discipline: 'Software Engineering',
-  eduStartDate: '09/2018',
-  eduEndDate: '06/2022',
-  companyName: 'ApplyDesk',
-  jobTitle: 'Senior Full Stack Engineer',
-  workStartDate: '01/2022',
-  workEndDate: 'Present',
-  workSummary: 'Leading full-stack React, Node.js, Express and AI chrome extension development.',
-  skills: 'React, TypeScript, Node.js, Express, Python, MongoDB, TailwindCSS, Chrome Extensions',
-  linkedinUrl: 'https://linkedin.com/in/imanshahinnezhad',
-  portfolioUrl: 'https://github.com/imanshahinnezhad',
-  gender: 'Male',
-  race: 'Asian',
-  veteranStatus: 'Not a Veteran',
-  disabilityStatus: 'No',
-  noticePeriod: 'Immediate',
-  salaryExpectation: '$120,000 / year'
-};
-
-// Auto Backfill MongoDB Users with Candidate Profile if missing
-async function backfillUserProfiles() {
+// Database Cleanup helper to clean up user profile records generically
+async function cleanDatabaseDefaults() {
   try {
     const users = await User.find({});
     for (const u of users) {
-      if (!u.profile || !u.profile.firstName) {
-        u.profile = {
-          ...DEFAULT_CANDIDATE_PROFILE,
-          ...(u.profile || {}),
-          firstName: u.name && u.name !== 'Guest User' ? u.name.split(' ')[0] : DEFAULT_CANDIDATE_PROFILE.firstName,
-          lastName: u.name && u.name !== 'Guest User' ? (u.name.split(' ').slice(1).join(' ') || DEFAULT_CANDIDATE_PROFILE.lastName) : DEFAULT_CANDIDATE_PROFILE.lastName,
-          email: u.email || DEFAULT_CANDIDATE_PROFILE.email
-        };
-        await u.save();
+      if (u.profile) {
+        let changed = false;
+        // If profile preferred names are empty or user name exists, sync cleanly with user's actual registered name
+        if (u.name && u.name !== 'Guest User') {
+          const nameParts = u.name.split(' ');
+          const realFirst = nameParts[0] || '';
+          const realLast = nameParts.slice(1).join(' ') || '';
+
+          // If preferred name matches real name, ensure firstName/lastName are synced
+          if (!u.profile.firstName) {
+            u.profile.firstName = realFirst;
+            changed = true;
+          }
+          if (!u.profile.lastName) {
+            u.profile.lastName = realLast;
+            changed = true;
+          }
+        }
+        if (changed) {
+          u.markModified('profile');
+          await u.save();
+        }
       }
     }
-    console.log('MongoDB: All candidate profiles verified & synced!');
+    console.log('MongoDB: Profile records verified.');
   } catch(e) {
-    console.error('Mongo profile backfill error:', e);
+    console.error('Mongo profile cleanup error:', e);
   }
 }
 
 if (process.env.MONGO_URI) {
   mongoose.connection.once('open', () => {
-    backfillUserProfiles();
+    cleanDatabaseDefaults();
   });
 }
 
@@ -352,11 +331,21 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
     const userId = req.params.userId || req.query.userId || 'default_user';
     let userDoc = await User.findOne({ id: userId });
     if (!userDoc) {
-      userDoc = await User.findOne({}); // Fallback to first user in Mongo if specific ID not found
+      userDoc = await User.findOne({});
     }
+    const userProfile = userDoc ? (userDoc.profile || {}) : {};
+    if (userDoc && !userProfile.firstName && userDoc.name) {
+      const parts = userDoc.name.split(' ');
+      userProfile.firstName = parts[0] || '';
+      userProfile.lastName = parts.slice(1).join(' ') || '';
+    }
+    if (userDoc && !userProfile.email && userDoc.email) {
+      userProfile.email = userDoc.email;
+    }
+
     return res.json({
       success: true,
-      profile: (userDoc && userDoc.profile && userDoc.profile.firstName) ? userDoc.profile : DEFAULT_CANDIDATE_PROFILE
+      profile: userProfile
     });
   } catch (err) {
     console.error('Error fetching user profile:', err);
@@ -367,27 +356,26 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
 app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
   try {
     const userId = req.params.userId || req.body.userId || 'default_user';
-    const profile = req.body.profile || req.body;
+    const newProfileData = req.body.profile || req.body;
 
     let userDoc = await User.findOne({ id: userId });
     if (!userDoc) {
-      // Find guest or fallback user
       userDoc = await User.findOne({});
     }
 
     if (!userDoc) {
       userDoc = new User({
         id: userId,
-        name: `${profile?.firstName || 'Iman'} ${profile?.lastName || 'Shahinnezhad'}`.trim(),
-        email: profile?.email || 'iman.shahinnezhad@gmail.com',
-        profile: { ...DEFAULT_CANDIDATE_PROFILE, ...(profile || {}) },
+        name: `${newProfileData?.firstName || ''} ${newProfileData?.lastName || ''}`.trim() || 'User',
+        email: newProfileData?.email,
+        profile: newProfileData || {},
         referralCode: generateReferralCode()
       });
     } else {
-      userDoc.profile = { ...DEFAULT_CANDIDATE_PROFILE, ...(userDoc.profile || {}), ...(profile || {}) };
-      if (profile?.email) userDoc.email = profile.email;
-      if (profile?.firstName || profile?.lastName) {
-        userDoc.name = `${profile?.firstName || ''} ${profile?.lastName || ''}`.trim();
+      userDoc.profile = { ...(userDoc.profile || {}), ...(newProfileData || {}) };
+      if (newProfileData?.email) userDoc.email = newProfileData.email;
+      if (newProfileData?.firstName || newProfileData?.lastName) {
+        userDoc.name = `${newProfileData?.firstName || ''} ${newProfileData?.lastName || ''}`.trim();
       }
     }
     await userDoc.save();
