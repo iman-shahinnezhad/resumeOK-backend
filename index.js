@@ -353,6 +353,65 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
   }
 });
 
+// --- LIVE CSV EXPORT ENDPOINT FOR GOOGLE SHEETS & LOOKER STUDIO ---
+app.get(['/api/admin/users.csv', '/api/admin/export-users-csv'], async (req, res) => {
+  try {
+    const users = await User.find({}).sort({ createdAt: -1 });
+
+    const escapeCsv = (str) => {
+      if (!str) return '""';
+      const clean = String(str).replace(/"/g, '""').replace(/\n/g, ' ');
+      return `"${clean}"`;
+    };
+
+    const headers = [
+      'User ID',
+      'Name',
+      'Email',
+      'Plan',
+      'Registered Date',
+      'Resumes Count',
+      'Cover Letters Count',
+      'Job Title',
+      'Company Name',
+      'School Name',
+      'Degree',
+      'City',
+      'Country'
+    ];
+
+    let csvContent = headers.join(',') + '\n';
+
+    for (const u of users) {
+      const p = u.profile || {};
+      const regDate = u.createdAt ? new Date(u.createdAt).toISOString().split('T')[0] : '';
+      const row = [
+        escapeCsv(u.id || u._id),
+        escapeCsv(u.name || `${p.firstName || ''} ${p.lastName || ''}`.trim() || 'User'),
+        escapeCsv(u.email || p.email || ''),
+        escapeCsv(u.plan || 'Free'),
+        escapeCsv(regDate),
+        u.resumes ? u.resumes.length : 0,
+        u.coverLetters ? u.coverLetters.length : 0,
+        escapeCsv(p.jobTitle || ''),
+        escapeCsv(p.companyName || ''),
+        escapeCsv(p.schoolName || ''),
+        escapeCsv(p.degree || ''),
+        escapeCsv(p.city || ''),
+        escapeCsv(p.country || '')
+      ];
+      csvContent += row.join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'inline; filename="resumeok_users.csv"');
+    return res.send(csvContent);
+  } catch (err) {
+    console.error('CSV Export Error:', err);
+    return res.status(500).send('Error generating CSV');
+  }
+});
+
 app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
   try {
     const userId = req.params.userId || req.body.userId || 'default_user';
