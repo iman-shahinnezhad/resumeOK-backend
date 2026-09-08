@@ -1201,7 +1201,7 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
 
     // 4. Full-Text Search and Relevance scoring
     let projection = null;
-    let sortOptions = { createdAt: -1 };
+    let sortOptions = { postedAt: -1, createdAt: -1, _id: -1 };
 
     if (q && q.trim() !== '') {
       const queryString = q.trim();
