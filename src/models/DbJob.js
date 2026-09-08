@@ -35,6 +35,7 @@ dbJobSchema.index(
 
 // High-speed compound indexes for queries, filtering, and pagination
 dbJobSchema.index({ isExpired: 1, createdAt: -1, _id: -1 });
+dbJobSchema.index({ isExpired: 1, postedAt: -1, createdAt: -1, _id: -1 });
 dbJobSchema.index({ isExpired: 1, remote: 1, createdAt: -1 });
 dbJobSchema.index({ isExpired: 1, company: 1, createdAt: -1 });
 dbJobSchema.index({ isExpired: 1, provider: 1, createdAt: -1 });
