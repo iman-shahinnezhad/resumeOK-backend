@@ -1457,8 +1457,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
           let creditsToAdd = 0;
           let newPlan = null;
-          if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
-          else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
+          if (productId === 'com.applydesk.monthly' || productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Monthly'; }
+          else if (productId === 'com.applydesk.weekly' || productId === 'com.resume.pro') { creditsToAdd = 50; newPlan = 'Weekly'; }
 
           if (creditsToAdd > 0) {
             let user = await User.findOne({ id: userId });
@@ -1571,8 +1571,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
     let creditsToAdd = 0;
     let newPlan = null;
 
-    if (productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Starter'; }
-    else if (productId === 'com.resume.pro') { creditsToAdd = 400; newPlan = 'Pro'; }
+    if (productId === 'com.applydesk.monthly' || productId === 'com.resume.starter') { creditsToAdd = 200; newPlan = 'Monthly'; }
+    else if (productId === 'com.applydesk.weekly' || productId === 'com.resume.pro') { creditsToAdd = 50; newPlan = 'Weekly'; }
 
     if (creditsToAdd > 0) {
       let user = await User.findOne({ id: userId });

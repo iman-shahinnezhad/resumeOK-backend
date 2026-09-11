@@ -3,7 +3,7 @@ if (typeof pdfParseLib !== 'function' && pdfParseLib && pdfParseLib.default) {
   pdfParseLib = pdfParseLib.default;
 }
 
-const METADATA_BLACKLIST = /^(react-pdf|pdfkit|latex|ghostscript|adobe|wkhtmltopdf|canvas|tcpdf|fpdf|itext|creator|producer|title|author|subject|keywords|template|stockholm|untitled|document|page|font|devicergb|devicecmyk|identity-h|cidfont|xobject)$/i;
+const METADATA_BLACKLIST = /^(react-pdf|pdfkit|latex|ghostscript|adobe|wkhtmltopdf|canvas|tcpdf|fpdf|itext|creator|producer|title|author|subject|keywords|template|stockholm|untitled|document|page|font|devicergb|devicecmyk|identity-h|cidfont|xobject|zm|xh|yh|zh|bt|et|tj|td|tm|cm|do|id|ei|tf|tr|ts|sc|scn|rg|cs|gs|re|flate|stream|endstream)$/i;
 
 const JOB_TITLE_KEYWORDS = /\b(associate|engineer|developer|manager|director|officer|specialist|consultant|analyst|assistant|lead|coordinator|architect|designer|intern|technician|supervisor|executive|representative|administrator|operator|worker|laborer)\b/i;
 
@@ -68,9 +68,15 @@ function isReliablePdfText(text) {
 function validateAndRepairParsedProfile(parsed) {
   const repaired = { ...parsed };
 
+  const KNOWN_TLDS = /\.(com|org|net|edu|gov|mil|io|co|ca|de|fr|uk|au|nl|se|es|it|ir|ai|dev|me|info|biz|app|tech|xyz|online|store|site|work|live|club|design|agency|digital|pro|global|systems|email)$/i;
+
   if (repaired.email) {
     const match = repaired.email.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-    repaired.email = match ? match[1].toLowerCase() : undefined;
+    if (match && KNOWN_TLDS.test(match[1])) {
+      repaired.email = match[1].toLowerCase();
+    } else {
+      repaired.email = undefined;
+    }
   }
 
   if (repaired.portfolioUrl) {
@@ -102,16 +108,45 @@ function validateAndRepairParsedProfile(parsed) {
     }
   }
 
+  // 5. Full Name & First/Last Name Validation & Email Fallback
+  const PDF_ARTIFACT_NAMES = /^(zm|xh|yh|zh|bt|et|tj|td|tm|cm|do|id|ei|tf|tr|ts|sc|scn|rg|cs|gs|re|flate|stream|endstream)$/i;
+
+  if (repaired.firstName && PDF_ARTIFACT_NAMES.test(String(repaired.firstName).trim())) {
+    repaired.firstName = undefined;
+  }
+  if (repaired.lastName && PDF_ARTIFACT_NAMES.test(String(repaired.lastName).trim())) {
+    repaired.lastName = undefined;
+  }
+  if (repaired.fullName && (PDF_ARTIFACT_NAMES.test(String(repaired.fullName).trim()) || String(repaired.fullName).trim().split(/\s+/).some(p => PDF_ARTIFACT_NAMES.test(p)))) {
+    repaired.fullName = undefined;
+    repaired.firstName = undefined;
+    repaired.lastName = undefined;
+  }
+
   if (repaired.fullName) {
     const f = String(repaired.fullName).trim();
-    if (METADATA_BLACKLIST.test(f) || JOB_TITLE_KEYWORDS.test(f) || f.length < 3 || /^\d+$/.test(f) || f.includes('GI X G Y')) {
+    if (METADATA_BLACKLIST.test(f) || JOB_TITLE_KEYWORDS.test(f) || f.length < 3 || /^\d+$/.test(f) || f.includes('GI X G Y') || PDF_ARTIFACT_NAMES.test(f)) {
       repaired.fullName = undefined;
       repaired.firstName = undefined;
       repaired.lastName = undefined;
     } else {
       const parts = f.split(/\s+/);
-      repaired.firstName = parts[0];
-      repaired.lastName = parts.slice(1).join(' ');
+      if (parts[0] && !PDF_ARTIFACT_NAMES.test(parts[0])) repaired.firstName = parts[0];
+      if (parts.length > 1 && !PDF_ARTIFACT_NAMES.test(parts.slice(1).join(' '))) repaired.lastName = parts.slice(1).join(' ');
+    }
+  }
+
+  // Fallback: If name was rejected or invalid, extract candidate name from Email handle (e.g. jason.miller@gmail.com => Jason Miller)
+  if ((!repaired.firstName || PDF_ARTIFACT_NAMES.test(repaired.firstName)) && repaired.email) {
+    const emailPrefix = String(repaired.email).split('@')[0];
+    const cleanPrefix = emailPrefix.replace(/[^a-zA-Z]/g, ' ').trim();
+    if (cleanPrefix.length >= 2) {
+      const parts = cleanPrefix.split(/\s+/).filter(p => p.length >= 2).map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
+      if (parts.length > 0) {
+        repaired.firstName = parts[0];
+        repaired.lastName = parts.slice(1).join(' ');
+        repaired.fullName = `${repaired.firstName} ${repaired.lastName}`.trim();
+      }
     }
   }
 
@@ -374,6 +409,15 @@ ${rawText}
   }
 
   // Strategy 3: Rule-Based Fallback Engine
+  if (!quality.isReliable) {
+    console.log(`[SERVER PARSER LOG] Text quality unreliable (${quality.reason}). Aborting rule engine.`);
+    return validateAndRepairParsedProfile({
+      skills: [],
+      workExperiences: [],
+      education: []
+    });
+  }
+
   const lines = rawText.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 0 && !METADATA_BLACKLIST.test(l));
 
   let email;
@@ -418,6 +462,13 @@ ${rawText}
   }
 
   const foundSkills = new Set();
+  const skillsMatch = rawText.match(/(?:skills|technical\s+skills|core\s+competencies|expertise|tools\s+&\s+technologies):?([\s\S]*?)(?:experience|education|projects|languages|certifications|employment|$)/i);
+  if (skillsMatch) {
+    const rawSkillsChunk = skillsMatch[1].split(/[\r\n]+/)[0] || skillsMatch[1].substring(0, 300);
+    const parsedSkills = rawSkillsChunk.split(/[,•|·/]/).map(s => s.trim()).filter(s => s.length >= 2 && s.length <= 35 && !METADATA_BLACKLIST.test(s));
+    parsedSkills.forEach(s => foundSkills.add(s));
+  }
+
   for (const skill of DOMAIN_SKILLS) {
     const esc = skill.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
     const regex = new RegExp(`(?:^|[^a-zA-Z0-9])${esc}(?:$|[^a-zA-Z0-9])`, 'i');
