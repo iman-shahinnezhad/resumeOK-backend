@@ -1212,7 +1212,7 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
 
       query.$text = { $search: cleanSearchQuery };
       projection = { score: { $meta: 'textScore' } };
-      sortOptions = { score: { $meta: 'textScore' } };
+      sortOptions = { postedAt: -1, createdAt: -1 };
     }
 
     // 5. Custom Sorting overrides
@@ -1249,44 +1249,37 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
         const mainTerm = targetTerms[0];
         query.title = new RegExp('^' + mainTerm, 'i');
 
-        jobs = await DbJob.find(query).sort({ createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
+        jobs = await DbJob.find(query).sort({ postedAt: -1, createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
       }
     }
 
-    // 8. Strict domain relevance filtering: ensure domain role matches rank above level modifier matches, and filter out non-domain roles
-    if (jobs.length > 0 && q && q.trim() !== '') {
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
-      const qWords = q.trim().toLowerCase().split(/\s+/).filter(t => t.length > 1);
-      const domainWords = qWords.filter(w => !SENIORITY.has(w));
+    // 8. Strict domain relevance filtering & NEWEST DATE SORTING: filter out non-domain roles and sort strictly by newest date added first
+    if (jobs.length > 0) {
+      if (q && q.trim() !== '') {
+        const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
+        const qWords = q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
+        const domainWords = qWords.filter(w => !SENIORITY.has(w));
 
-      if (domainWords.length > 0) {
-        // Filter out jobs that do not contain any core domain term in title or skills
-        const domainFiltered = jobs.filter(job => {
-          const t = (job.title || '').toLowerCase();
-          const s = (Array.isArray(job.skills) ? job.skills.join(' ') : '').toLowerCase();
-          return domainWords.some(dw => t.includes(dw) || s.includes(dw));
-        });
+        if (domainWords.length > 0) {
+          // Filter out jobs that do not contain any core domain term in title or skills
+          const domainFiltered = jobs.filter(job => {
+            const t = (job.title || '').toLowerCase();
+            const s = (Array.isArray(job.skills) ? job.skills.join(' ') : '').toLowerCase();
+            return domainWords.some(dw => t.includes(dw) || s.includes(dw));
+          });
 
-        if (domainFiltered.length > 0) {
-          jobs = domainFiltered;
-        }
-
-        jobs.sort((a, b) => {
-          const aTitle = (a.title || '').toLowerCase();
-          const bTitle = (b.title || '').toLowerCase();
-
-          const aDomainScore = domainWords.filter(w => aTitle.includes(w)).length;
-          const bDomainScore = domainWords.filter(w => bTitle.includes(w)).length;
-
-          if (aDomainScore !== bDomainScore) {
-            return bDomainScore - aDomainScore;
+          if (domainFiltered.length > 0) {
+            jobs = domainFiltered;
           }
-
-          const aAllMatch = qWords.filter(w => aTitle.includes(w)).length;
-          const bAllMatch = qWords.filter(w => bTitle.includes(w)).length;
-          return bAllMatch - aAllMatch;
-        });
+        }
       }
+
+      // ALWAYS SORT STRICTLY BY NEWEST DATE ADDED FIRST (postedAt / createdAt descending)
+      jobs.sort((a, b) => {
+        const aTime = new Date(a.postedAt || a.createdAt || 0).getTime();
+        const bTime = new Date(b.postedAt || b.createdAt || 0).getTime();
+        return bTime - aTime;
+      });
     }
 
 function extractSalaryFromText(text) {
