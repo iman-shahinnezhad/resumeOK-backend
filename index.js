@@ -749,6 +749,7 @@ app.post('/api/auth/apple', async (req, res) => {
 
     // 1. Search by appleId first (Apple guarantees sub is persistent across all sign-ins)
     let user = await User.findOne({ appleId });
+    let isNewUser = false;
 
     // 2. If not found by appleId, try finding by email if present
     if (!user && email) {
@@ -757,6 +758,7 @@ app.post('/api/auth/apple', async (req, res) => {
 
     // 3. If user still does not exist, register a new account
     if (!user) {
+      isNewUser = true;
       const userEmail = email || `apple_${appleId.substring(0, 10)}@privaterelay.appleid.com`;
       let fullName = 'Apple User';
       if (name && (name.firstName || name.lastName)) {
@@ -782,7 +784,7 @@ app.post('/api/auth/apple', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ success: true, token, user });
+    res.json({ success: true, token, user, isNewUser });
   } catch (error) {
     console.error('Apple Auth Error:', error);
     res.status(500).json({ error: error.message || 'Server error' });
