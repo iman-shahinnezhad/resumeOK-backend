@@ -1197,6 +1197,29 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       }
     }
 
+    if (roles && typeof roles === 'string' && roles.trim()) {
+      const roleItems = roles.split(',').map(r => r.trim()).filter(Boolean);
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
+      
+      const domainTerms = [];
+      roleItems.forEach(r => {
+        const words = r.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !SENIORITY.has(w));
+        words.forEach(w => {
+          if (!domainTerms.includes(w)) domainTerms.push(w);
+        });
+      });
+
+      if (domainTerms.length > 0) {
+        const regexPattern = domainTerms.join('|');
+        const domainRx = new RegExp(regexPattern, 'i');
+        query.$or = [
+          { title: domainRx },
+          { cleanSnippet: domainRx },
+          { description: domainRx }
+        ];
+      }
+    }
+
     // 4. Keyset (Cursor-based) Pagination for scalability
     if (lastCreatedAt) {
       query.createdAt = { $lt: new Date(lastCreatedAt) };
