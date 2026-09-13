@@ -1239,16 +1239,22 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
 
     // 7. Indexed fallback if full-text search yielded 0 results
     if (jobs.length === 0 && q && q.trim() !== '') {
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager']);
-      const allTerms = q.trim().toLowerCase().split(/\s+/).filter(t => t.length > 1);
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
+      const allTerms = q.trim().toLowerCase().split(/[\s/&-]+/).filter(t => t.length > 1);
       const domainTerms = allTerms.filter(t => !SENIORITY.has(t));
       const targetTerms = domainTerms.length > 0 ? domainTerms : allTerms;
 
       if (targetTerms.length > 0) {
         delete query.$text;
-        const mainTerm = targetTerms[0];
-        query.title = new RegExp('^' + mainTerm, 'i');
+        query.$or = targetTerms.map(term => ({ title: new RegExp(term, 'i') }));
+        jobs = await DbJob.find(query).sort({ postedAt: -1, createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
+      }
 
+      // Fallback Level 3: If still 0 jobs, return newest available jobs so feed is never empty
+      if (jobs.length === 0) {
+        delete query.$text;
+        delete query.$or;
+        delete query.title;
         jobs = await DbJob.find(query).sort({ postedAt: -1, createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
       }
     }
