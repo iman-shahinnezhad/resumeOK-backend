@@ -1177,7 +1177,8 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       query.remote = true;
     }
     if (location && location.trim() !== '' && !['all', 'all locations'].includes(location.trim().toLowerCase())) {
-      query.location = new RegExp(location.trim(), 'i');
+      const mainLoc = location.trim().split(',')[0].trim();
+      query.location = new RegExp(mainLoc, 'i');
     }
     if (company) {
       query.company = company.toUpperCase().trim();
@@ -1229,6 +1230,12 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
 
     let cursor = DbJob.find(query, projection).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
     let jobs = await cursor;
+
+    // Fallback 1: If 0 jobs found due to strict location filter, retry without location restriction so initial load never fails
+    if (jobs.length === 0 && query.location) {
+      delete query.location;
+      jobs = await DbJob.find(query, projection).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
+    }
 
     // 7. Indexed fallback if full-text search yielded 0 results
     if (jobs.length === 0 && q && q.trim() !== '') {
