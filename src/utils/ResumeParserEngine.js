@@ -65,8 +65,19 @@ function isReliablePdfText(text) {
 /**
  * Step 7: Validation & Repair
  */
+function cleanCoreRoleTitle(title) {
+  if (!title) return '';
+  const SENIORITY_REGEX = /\b(senior|sr\.?|junior|jr\.?|lead|principal|staff|associate|intern|entry[\s-]*level|mid[\s-]*level|head\s+of|director\s+of|vp\s+of|executive|chief)\b/gi;
+  const cleaned = title.replace(SENIORITY_REGEX, '').replace(/\s+/g, ' ').trim();
+  return cleaned || title.trim();
+}
+
 function validateAndRepairParsedProfile(parsed) {
   const repaired = { ...parsed };
+
+  if (repaired.targetRole) {
+    repaired.targetRole = cleanCoreRoleTitle(repaired.targetRole);
+  }
 
   const KNOWN_TLDS = /\.(com|org|net|edu|gov|mil|io|co|ca|de|fr|uk|au|nl|se|es|it|ir|ai|dev|me|info|biz|app|tech|xyz|online|store|site|work|live|club|design|agency|digital|pro|global|systems|email)$/i;
 

@@ -1204,8 +1204,12 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
     let sortOptions = { postedAt: -1, createdAt: -1, _id: -1 };
 
     if (q && q.trim() !== '') {
-      const queryString = q.trim();
-      query.$text = { $search: queryString };
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
+      const qWords = q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
+      const domainWords = qWords.filter(w => !SENIORITY.has(w));
+      const cleanSearchQuery = domainWords.length > 0 ? domainWords.join(' ') : q.trim();
+
+      query.$text = { $search: cleanSearchQuery };
       projection = { score: { $meta: 'textScore' } };
       sortOptions = { score: { $meta: 'textScore' } };
     }
@@ -1242,13 +1246,24 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       }
     }
 
-    // 8. Domain relevance sorting: ensure domain role matches rank above generic level modifier matches
+    // 8. Strict domain relevance filtering: ensure domain role matches rank above level modifier matches, and filter out non-domain roles
     if (jobs.length > 0 && q && q.trim() !== '') {
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager']);
+      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
       const qWords = q.trim().toLowerCase().split(/\s+/).filter(t => t.length > 1);
       const domainWords = qWords.filter(w => !SENIORITY.has(w));
 
       if (domainWords.length > 0) {
+        // Filter out jobs that do not contain any core domain term in title or skills
+        const domainFiltered = jobs.filter(job => {
+          const t = (job.title || '').toLowerCase();
+          const s = (Array.isArray(job.skills) ? job.skills.join(' ') : '').toLowerCase();
+          return domainWords.some(dw => t.includes(dw) || s.includes(dw));
+        });
+
+        if (domainFiltered.length > 0) {
+          jobs = domainFiltered;
+        }
+
         jobs.sort((a, b) => {
           const aTitle = (a.title || '').toLowerCase();
           const bTitle = (b.title || '').toLowerCase();
