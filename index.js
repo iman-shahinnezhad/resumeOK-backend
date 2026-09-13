@@ -1147,7 +1147,7 @@ const applyRateLimiter = rateLimiter(5, 60 * 1000); // 5 per min
 
 // Fetch merged job listings directly from MongoDB Job persistence collection with search features
 app.get('/api/jobs', searchRateLimiter, async (req, res) => {
-  const { q, remote, location, company, provider, skills, sortBy, page, limit, lastCreatedAt, userId } = req.query;
+  const { q, remote, location, company, provider, skills, roles, sortBy, page, limit, lastCreatedAt, userId } = req.query;
 
   // 1. Check Query Cache
   const cacheKey = JSON.stringify(req.query);
@@ -1203,14 +1203,16 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       
       const domainTerms = [];
       roleItems.forEach(r => {
-        const words = r.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !SENIORITY.has(w));
+        const cleaned = r.toLowerCase().replace(/[-_/]/g, ' ');
+        const words = cleaned.split(/\s+/).filter(w => w.length >= 2 && !SENIORITY.has(w));
         words.forEach(w => {
           if (!domainTerms.includes(w)) domainTerms.push(w);
         });
       });
 
       if (domainTerms.length > 0) {
-        const regexPattern = domainTerms.join('|');
+        const escapedTerms = domainTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const regexPattern = escapedTerms.join('|');
         const domainRx = new RegExp(regexPattern, 'i');
         query.$or = [
           { title: domainRx },
