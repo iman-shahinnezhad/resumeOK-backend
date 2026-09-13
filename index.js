@@ -1409,8 +1409,16 @@ app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async
 
 // Submit a candidate application with resume upload
 app.post('/api/jobs/apply', applyRateLimiter, upload.single('resume'), async (req, res) => {
-  const { jobId, companySlug, sourceType, firstName, lastName, email, phone, jobBoardKey } = req.body;
-  const resumeFile = req.file;
+  const { jobId, companySlug, sourceType, firstName, lastName, email, phone, jobBoardKey, resumeBase64, resumeName } = req.body;
+  let resumeFile = req.file;
+
+  if (!resumeFile && resumeBase64) {
+    resumeFile = {
+      buffer: Buffer.from(resumeBase64, 'base64'),
+      originalname: resumeName || 'resume.pdf',
+      mimetype: 'application/pdf'
+    };
+  }
 
   if (!jobId || !companySlug || !sourceType || !firstName || !lastName || !email || !resumeFile) {
     return res.status(400).json({ error: 'Missing required application fields or resume file' });
