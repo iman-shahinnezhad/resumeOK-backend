@@ -274,9 +274,19 @@ const userSchema = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now }
     }
   ],
+  hasCompletedOnboarding: { type: Boolean, default: false },
   profile: { type: Object, default: {} },
   createdAt: { type: Date, default: Date.now }
 });
+
+function formatUserResponse(userDoc) {
+  if (!userDoc) return null;
+  const userObj = userDoc.toObject ? userDoc.toObject() : { ...userDoc };
+  const hasProfile = userObj.profile && Object.keys(userObj.profile).length > 0;
+  userObj.hasCompletedOnboarding = Boolean(userObj.hasCompletedOnboarding || hasProfile);
+  delete userObj.password;
+  return userObj;
+}
 
 const generateReferralCode = () => {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -291,6 +301,10 @@ async function cleanDatabaseDefaults() {
     for (const u of users) {
       if (u.profile) {
         let changed = false;
+        if (u.profile && Object.keys(u.profile).length > 0 && !u.hasCompletedOnboarding) {
+          u.hasCompletedOnboarding = true;
+          changed = true;
+        }
         // If profile preferred names are empty or user name exists, sync cleanly with user's actual registered name
         if (u.name && u.name !== 'Guest User') {
           const nameParts = u.name.split(' ');
@@ -328,11 +342,25 @@ if (process.env.MONGO_URI) {
 // --- USER PROFILE ENDPOINTS (SYNC BETWEEN WEB, APP & EXTENSION) ---
 app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
   try {
-    const userId = req.params.userId || req.query.userId || 'default_user';
-    let userDoc = await User.findOne({ id: userId });
+    let userId = req.params.userId || req.query.userId;
+    
+    if ((!userId || userId === 'default_user') && req.headers.authorization) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.id) userId = decoded.id;
+      } catch (e) {}
+    }
+
+    let userDoc = null;
+    if (userId && userId !== 'default_user') {
+      userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
+    }
+
     if (!userDoc) {
       userDoc = await User.findOne({});
     }
+
     const userProfile = userDoc ? (userDoc.profile || {}) : {};
     if (userDoc && !userProfile.firstName && userDoc.name) {
       const parts = userDoc.name.split(' ');
@@ -343,9 +371,12 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
       userProfile.email = userDoc.email;
     }
 
+    const hasCompletedOnboarding = userDoc ? Boolean(userDoc.hasCompletedOnboarding || (userDoc.profile && Object.keys(userDoc.profile).length > 0)) : false;
+
     return res.json({
       success: true,
-      profile: userProfile
+      profile: userProfile,
+      hasCompletedOnboarding
     });
   } catch (err) {
     console.error('Error fetching user profile:', err);
@@ -414,24 +445,40 @@ app.get(['/api/admin/users.csv', '/api/admin/export-users-csv'], async (req, res
 
 app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
   try {
-    const userId = req.params.userId || req.body.userId || 'default_user';
+    let userId = req.params.userId || req.body.userId;
     const newProfileData = req.body.profile || req.body;
+    const explicitCompleted = req.body.hasCompletedOnboarding !== undefined ? req.body.hasCompletedOnboarding : true;
 
-    let userDoc = await User.findOne({ id: userId });
+    if ((!userId || userId === 'default_user') && req.headers.authorization) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.id) userId = decoded.id;
+      } catch (e) {}
+    }
+
+    let userDoc = null;
+    if (userId && userId !== 'default_user') {
+      userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
+    }
+
     if (!userDoc) {
       userDoc = await User.findOne({});
     }
 
     if (!userDoc) {
       userDoc = new User({
-        id: userId,
+        id: userId || ('user_' + crypto.randomBytes(8).toString('hex')),
         name: `${newProfileData?.firstName || ''} ${newProfileData?.lastName || ''}`.trim() || 'User',
         email: newProfileData?.email,
         profile: newProfileData || {},
+        hasCompletedOnboarding: Boolean(explicitCompleted),
         referralCode: generateReferralCode()
       });
     } else {
       userDoc.profile = { ...(userDoc.profile || {}), ...(newProfileData || {}) };
+      userDoc.markModified('profile');
+      userDoc.hasCompletedOnboarding = Boolean(explicitCompleted);
       if (newProfileData?.email) userDoc.email = newProfileData.email;
       if (newProfileData?.firstName || newProfileData?.lastName) {
         userDoc.name = `${newProfileData?.firstName || ''} ${newProfileData?.lastName || ''}`.trim();
@@ -441,7 +488,8 @@ app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) =>
     return res.json({
       success: true,
       message: 'Profile updated and synced successfully in MongoDB',
-      profile: userDoc.profile
+      profile: userDoc.profile,
+      hasCompletedOnboarding: userDoc.hasCompletedOnboarding
     });
   } catch (err) {
     console.error('Error saving user profile:', err);
@@ -663,7 +711,7 @@ app.post('/api/auth/register', async (req, res) => {
     await user.save();
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ success: true, token, user });
+    res.json({ success: true, token, user: formatUserResponse(user) });
   } catch (error) {
     console.error('Register Error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -689,7 +737,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ success: true, token, user });
+    res.json({ success: true, token, user: formatUserResponse(user) });
   } catch (error) {
     console.error('Login Error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -726,7 +774,7 @@ app.post('/api/auth/google', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ success: true, token, user });
+    res.json({ success: true, token, user: formatUserResponse(user) });
   } catch (error) {
     console.error('Google Auth Error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -784,7 +832,7 @@ app.post('/api/auth/apple', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ success: true, token, user, isNewUser });
+    res.json({ success: true, token, user: formatUserResponse(user), isNewUser });
   } catch (error) {
     console.error('Apple Auth Error:', error);
     res.status(500).json({ error: error.message || 'Server error' });
