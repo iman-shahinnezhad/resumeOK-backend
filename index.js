@@ -1147,7 +1147,8 @@ const applyRateLimiter = rateLimiter(5, 60 * 1000); // 5 per min
 
 // Fetch merged job listings directly from MongoDB Job persistence collection with search features
 app.get('/api/jobs', searchRateLimiter, async (req, res) => {
-  const { q, remote, location, company, provider, skills, roles, sortBy, page, limit, lastCreatedAt, userId } = req.query;
+  const { q, remote, location, company, provider, skills, roles: queryRoles, role: queryRole, sortBy, page, limit, lastCreatedAt, userId } = req.query;
+  const roles = queryRoles || queryRole;
 
   // 1. Check Query Cache
   const cacheKey = JSON.stringify(req.query);
@@ -1197,117 +1198,81 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       }
     }
 
-    if (roles && typeof roles === 'string' && roles.trim()) {
-      const roleItems = roles.split(',').map(r => r.trim()).filter(Boolean);
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
-      
-      const domainTerms = [];
-      roleItems.forEach(r => {
-        const cleaned = r.toLowerCase().replace(/[-_/]/g, ' ');
-        const words = cleaned.split(/\s+/).filter(w => w.length >= 2 && !SENIORITY.has(w));
-        words.forEach(w => {
-          if (!domainTerms.includes(w)) domainTerms.push(w);
-        });
+    // Helper function to escape regex special characters
+    function escapeRegex(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // Collect all search phrase items from roles, skills, and q
+    const rawRolesStr = Array.isArray(roles) ? roles.join(',') : (typeof roles === 'string' ? roles : '');
+    const searchPhrases = [];
+
+    if (rawRolesStr.trim()) {
+      rawRolesStr.split(',').forEach(r => {
+        const cleaned = r.trim();
+        if (cleaned) searchPhrases.push(cleaned);
+      });
+    }
+
+    if (skills) {
+      const skillsStr = Array.isArray(skills) ? skills.join(',') : (typeof skills === 'string' ? skills : '');
+      skillsStr.split(',').forEach(s => {
+        const cleaned = s.trim();
+        if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
+      });
+    }
+
+    if (q && typeof q === 'string' && q.trim()) {
+      q.split(',').forEach(qItem => {
+        const cleaned = qItem.trim();
+        if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
+      });
+    }
+
+    // Build MongoDB $or query for strict title matching:
+    // For each phrase, ALL words in that phrase must match job.title (AND logic).
+    // Across phrases, ANY phrase match is valid (OR logic).
+    if (searchPhrases.length > 0) {
+      const orConditions = [];
+
+      searchPhrases.forEach(phrase => {
+        const words = phrase.toLowerCase().split(/[\s/&\-_]+/).filter(w => w.length > 0);
+        if (words.length === 1) {
+          orConditions.push({ title: new RegExp(escapeRegex(words[0]), 'i') });
+        } else if (words.length > 1) {
+          const andArray = words.map(w => ({ title: new RegExp(escapeRegex(w), 'i') }));
+          orConditions.push({ $and: andArray });
+        }
       });
 
-      if (domainTerms.length > 0) {
-        const escapedTerms = domainTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        const regexPattern = escapedTerms.join('|');
-        const domainRx = new RegExp(regexPattern, 'i');
-        query.$or = [
-          { title: domainRx },
-          { cleanSnippet: domainRx },
-          { description: domainRx }
-        ];
+      if (orConditions.length > 0) {
+        query.$or = orConditions;
       }
     }
 
-    // 4. Keyset (Cursor-based) Pagination for scalability
+    // Keyset (Cursor-based) Pagination for scalability
     if (lastCreatedAt) {
       query.createdAt = { $lt: new Date(lastCreatedAt) };
     }
 
-    // 4. Full-Text Search and Relevance scoring
-    let projection = null;
-    let sortOptions = { postedAt: -1, createdAt: -1, _id: -1 };
-
-    if (q && q.trim() !== '') {
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
-      const qWords = q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
-      const domainWords = qWords.filter(w => !SENIORITY.has(w));
-      const cleanSearchQuery = domainWords.length > 0 ? domainWords.join(' ') : q.trim();
-
-      query.$text = { $search: cleanSearchQuery };
-      projection = { score: { $meta: 'textScore' } };
-      sortOptions = { postedAt: -1, createdAt: -1 };
-    }
-
-    // 5. Custom Sorting overrides
-    if (sortBy === 'date') {
-      sortOptions = { postedAt: -1, createdAt: -1 };
-    } else if (sortBy === 'company') {
-      sortOptions = { company: 1 };
-    }
-
-    // 6. High-performance pagination limits (prevents Node.js OOM crashes with millions of jobs)
+    // High-performance pagination limits & sorting strictly by newest date
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = parseInt(limit, 10);
     const limitNum = isNaN(parsedLimit) ? 30 : (parsedLimit === 0 ? 50 : Math.min(100, Math.max(1, parsedLimit)));
     const skipNum = lastCreatedAt ? 0 : (pageNum - 1) * limitNum;
+    const sortOptions = { postedAt: -1, createdAt: -1 };
 
-    let cursor = DbJob.find(query, projection).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
+    let cursor = DbJob.find(query).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
     let jobs = await cursor;
 
-    // Fallback 1: If 0 jobs found due to strict location filter, retry without location restriction so initial load never fails
+    // Fallback: If 0 jobs found due to strict location filter, retry without location restriction
     if (jobs.length === 0 && query.location) {
       delete query.location;
-      jobs = await DbJob.find(query, projection).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
+      jobs = await DbJob.find(query).sort(sortOptions).skip(skipNum).limit(limitNum).lean();
     }
 
-    // 7. Indexed fallback if full-text search yielded 0 results
-    if (jobs.length === 0 && q && q.trim() !== '') {
-      const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
-      const allTerms = q.trim().toLowerCase().split(/[\s/&-]+/).filter(t => t.length > 1);
-      const domainTerms = allTerms.filter(t => !SENIORITY.has(t));
-      const targetTerms = domainTerms.length > 0 ? domainTerms : allTerms;
-
-      if (targetTerms.length > 0) {
-        delete query.$text;
-        query.$or = targetTerms.map(term => ({ title: new RegExp(term, 'i') }));
-        jobs = await DbJob.find(query).sort({ postedAt: -1, createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
-      }
-
-      // Fallback Level 3: If still 0 jobs, return newest available jobs so feed is never empty
-      if (jobs.length === 0) {
-        delete query.$text;
-        delete query.$or;
-        delete query.title;
-        jobs = await DbJob.find(query).sort({ postedAt: -1, createdAt: -1 }).skip(skipNum).limit(limitNum).lean();
-      }
-    }
-
-    // 8. Strict domain relevance filtering & NEWEST DATE SORTING: filter out non-domain roles and sort strictly by newest date added first
+    // Sort strictly by newest date added first
     if (jobs.length > 0) {
-      if (q && q.trim() !== '') {
-        const SENIORITY = new Set(['senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'associate', 'intern', 'entry', 'mid', 'head', 'vp', 'director', 'manager', 'executive', 'chief']);
-        const qWords = q.trim().toLowerCase().split(/\s+/).filter(w => w.length > 1);
-        const domainWords = qWords.filter(w => !SENIORITY.has(w));
-
-        if (domainWords.length > 0) {
-          // Filter out jobs that do not contain any core domain term in title or skills
-          const domainFiltered = jobs.filter(job => {
-            const t = (job.title || '').toLowerCase();
-            const s = (Array.isArray(job.skills) ? job.skills.join(' ') : '').toLowerCase();
-            return domainWords.some(dw => t.includes(dw) || s.includes(dw));
-          });
-
-          if (domainFiltered.length > 0) {
-            jobs = domainFiltered;
-          }
-        }
-      }
-
-      // ALWAYS SORT STRICTLY BY NEWEST DATE ADDED FIRST (postedAt / createdAt descending)
       jobs.sort((a, b) => {
         const aTime = new Date(a.postedAt || a.createdAt || 0).getTime();
         const bTime = new Date(b.postedAt || b.createdAt || 0).getTime();
