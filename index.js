@@ -1189,14 +1189,6 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
     if (provider) {
       query.provider = provider.toLowerCase().trim();
     }
-    if (skills) {
-      const skillsArray = typeof skills === 'string' 
-        ? skills.split(',').map(s => s.trim()) 
-        : Array.isArray(skills) ? skills : [];
-      if (skillsArray.length > 0) {
-        query.skills = { $in: skillsArray };
-      }
-    }
 
     // Helper function to escape regex special characters
     function escapeRegex(str) {
