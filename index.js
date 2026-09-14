@@ -1203,30 +1203,31 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
-    // Collect all search phrase items from roles, skills, and q
-    const rawRolesStr = Array.isArray(roles) ? roles.join(',') : (typeof roles === 'string' ? roles : '');
+    // Collect all search phrase items
+    // If explicit search query `q` is provided by user, it overrides default profile roles/skills
     const searchPhrases = [];
-
-    if (rawRolesStr.trim()) {
-      rawRolesStr.split(',').forEach(r => {
-        const cleaned = r.trim();
-        if (cleaned) searchPhrases.push(cleaned);
-      });
-    }
-
-    if (skills) {
-      const skillsStr = Array.isArray(skills) ? skills.join(',') : (typeof skills === 'string' ? skills : '');
-      skillsStr.split(',').forEach(s => {
-        const cleaned = s.trim();
-        if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
-      });
-    }
 
     if (q && typeof q === 'string' && q.trim()) {
       q.split(',').forEach(qItem => {
         const cleaned = qItem.trim();
         if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
       });
+    } else {
+      const rawRolesStr = Array.isArray(roles) ? roles.join(',') : (typeof roles === 'string' ? roles : '');
+      if (rawRolesStr.trim()) {
+        rawRolesStr.split(',').forEach(r => {
+          const cleaned = r.trim();
+          if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
+        });
+      }
+
+      if (skills) {
+        const skillsStr = Array.isArray(skills) ? skills.join(',') : (typeof skills === 'string' ? skills : '');
+        skillsStr.split(',').forEach(s => {
+          const cleaned = s.trim();
+          if (cleaned && !searchPhrases.includes(cleaned)) searchPhrases.push(cleaned);
+        });
+      }
     }
 
     // Build MongoDB $or query for strict title matching:
