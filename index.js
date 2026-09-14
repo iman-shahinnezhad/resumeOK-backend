@@ -1237,10 +1237,18 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
 
       searchPhrases.forEach(phrase => {
         const words = phrase.toLowerCase().split(/[\s/&\-_]+/).filter(w => w.length > 0);
+
+        const buildWordRegex = (w) => {
+          const escaped = escapeRegex(w);
+          // For short 1-2 letter acronyms/words (e.g. ui, ux, qa, ai, ml), enforce strict word boundaries (\bui\b) so "ui" doesn't match inside "Circuit"
+          const pattern = w.length <= 2 ? `\\b${escaped}\\b` : `\\b${escaped}`;
+          return new RegExp(pattern, 'i');
+        };
+
         if (words.length === 1) {
-          orConditions.push({ title: new RegExp(escapeRegex(words[0]), 'i') });
+          orConditions.push({ title: buildWordRegex(words[0]) });
         } else if (words.length > 1) {
-          const andArray = words.map(w => ({ title: new RegExp(escapeRegex(w), 'i') }));
+          const andArray = words.map(w => ({ title: buildWordRegex(w) }));
           orConditions.push({ $and: andArray });
         }
       });
