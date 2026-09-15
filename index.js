@@ -357,7 +357,7 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
   try {
     let userId = req.params.userId || req.query.userId;
     
-    if ((!userId || userId === 'default_user') && req.headers.authorization) {
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -368,10 +368,6 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
     let userDoc = null;
     if (userId && userId !== 'default_user') {
       userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
-    }
-
-    if (!userDoc) {
-      userDoc = await User.findOne({});
     }
 
     const userProfile = userDoc ? (userDoc.profile || {}) : {};
@@ -462,7 +458,7 @@ app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) =>
     const newProfileData = req.body.profile || req.body;
     const explicitCompleted = req.body.hasCompletedOnboarding !== undefined ? req.body.hasCompletedOnboarding : true;
 
-    if ((!userId || userId === 'default_user') && req.headers.authorization) {
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -473,10 +469,6 @@ app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) =>
     let userDoc = null;
     if (userId && userId !== 'default_user') {
       userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
-    }
-
-    if (!userDoc) {
-      userDoc = await User.findOne({});
     }
 
     if (!userDoc) {
