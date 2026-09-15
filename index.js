@@ -1414,14 +1414,46 @@ app.post('/api/admin/workers/run', adminAuth, async (req, res) => {
 const aiRateLimiter = rateLimiter(10, 60 * 1000); // 10 matches per minute
 app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async (req, res) => {
   const { jobId } = req.params;
-  const { resumeText, resumeBase64 } = req.body;
+  const { resumeText, resumeBase64, jobData, title, description, requirements } = req.body || {};
   const resumeFile = req.file;
 
   try {
-    // 1. Find job details in MongoDB
-    const job = await DbJob.findOne({ jobId, isExpired: false });
+    // 1. Find job details in MongoDB or construct from payload
+    let job = await DbJob.findOne({
+      $or: [
+        { jobId: String(jobId) },
+        { jobId: parseInt(jobId) || -1 },
+        { _id: mongoose.Types.ObjectId.isValid(jobId) ? jobId : null }
+      ]
+    });
+
+    if (!job && (jobData || title || description)) {
+      const jobTitle = title || jobData?.title || jobData?.role || 'Job Position';
+      const jobDesc = description || jobData?.description || jobData?.snippet || jobTitle;
+      const jobReqs = requirements || jobData?.requirements || (Array.isArray(jobData?.skills) ? jobData.skills.join(', ') : '');
+
+      job = {
+        jobId: String(jobId),
+        title: jobTitle,
+        description: jobDesc,
+        requirements: jobReqs
+      };
+
+      try {
+        const newDbJob = new DbJob({
+          jobId: String(jobId),
+          title: jobTitle,
+          company: jobData?.company || jobData?.companyName || 'Company',
+          description: jobDesc,
+          requirements: jobReqs,
+          sourceType: 'general'
+        });
+        await newDbJob.save();
+      } catch (dbErr) {}
+    }
+
     if (!job) {
-      return res.status(404).json({ success: false, error: 'Job posting not found or expired' });
+      return res.status(404).json({ success: false, error: 'Job posting details not found. Please refresh and try again.' });
     }
 
     // 2. Extract base64 resume if uploaded via multipart file
@@ -1430,8 +1462,8 @@ app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async
       base64Data = resumeFile.buffer.toString('base64');
     }
 
-    if (!resumeText && !base64Data) {
-      return res.status(400).json({ success: false, error: 'Missing resume text or uploaded file' });
+    if (!resumeText && (!base64Data || base64Data.length < 20)) {
+      return res.status(400).json({ success: false, error: 'Please upload or select a valid resume before tailoring.' });
     }
 
     // 3. Call AI matching service
@@ -1441,14 +1473,14 @@ app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async
       base64Data
     );
 
-    res.json({
+    return res.json({
       success: true,
       jobId,
       ...matchResult
     });
   } catch (error) {
     console.error('Error in job matching endpoint:', error);
-    res.status(500).json({ success: false, error: 'Failed to complete AI matching analysis' });
+    return res.status(500).json({ success: false, error: 'Failed to complete AI matching analysis' });
   }
 });
 
