@@ -279,11 +279,24 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+function hasCompletedOnboardingData(userDoc) {
+  if (!userDoc) return false;
+  if (userDoc.hasCompletedOnboarding === true) return true;
+  const p = userDoc.profile || {};
+  return Boolean(
+    p.jobTitle ||
+    p.role ||
+    (Array.isArray(p.roles) && p.roles.length > 0) ||
+    (Array.isArray(p.skills) && p.skills.length > 0) ||
+    p.experience ||
+    p.resumeFile
+  );
+}
+
 function formatUserResponse(userDoc) {
   if (!userDoc) return null;
   const userObj = userDoc.toObject ? userDoc.toObject() : { ...userDoc };
-  const hasProfile = userObj.profile && Object.keys(userObj.profile).length > 0;
-  userObj.hasCompletedOnboarding = Boolean(userObj.hasCompletedOnboarding || hasProfile);
+  userObj.hasCompletedOnboarding = hasCompletedOnboardingData(userDoc);
   delete userObj.password;
   return userObj;
 }
@@ -301,7 +314,7 @@ async function cleanDatabaseDefaults() {
     for (const u of users) {
       if (u.profile) {
         let changed = false;
-        if (u.profile && Object.keys(u.profile).length > 0 && !u.hasCompletedOnboarding) {
+        if (hasCompletedOnboardingData(u) && !u.hasCompletedOnboarding) {
           u.hasCompletedOnboarding = true;
           changed = true;
         }
@@ -371,7 +384,7 @@ app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => 
       userProfile.email = userDoc.email;
     }
 
-    const hasCompletedOnboarding = userDoc ? Boolean(userDoc.hasCompletedOnboarding || (userDoc.profile && Object.keys(userDoc.profile).length > 0)) : false;
+    const hasCompletedOnboarding = hasCompletedOnboardingData(userDoc);
 
     return res.json({
       success: true,
