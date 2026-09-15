@@ -1556,6 +1556,8 @@ app.post('/purchase/verify-apple', async (req, res) => {
 
           const productId = payload.productId;
           const transactionId = payload.transactionId;
+          const subscriptionGroupId = payload.subscriptionGroupIdentifier || '22386813';
+          console.log(`StoreKit 2 Transaction - Product: ${productId}, GroupID: ${subscriptionGroupId}`);
 
           if (!productId) {
             console.error("Missing productId in JWS transaction payload:", payload);
