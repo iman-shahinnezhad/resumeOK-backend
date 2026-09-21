@@ -540,6 +540,11 @@ app.get('/api/health', (req, res) => {
 
 });
 
+// Configurable Guest Welcome Credits (Defaults to 15, controllable via ENV or admin endpoint)
+let GUEST_WELCOME_CREDITS = process.env.GUEST_WELCOME_CREDITS !== undefined 
+  ? Number(process.env.GUEST_WELCOME_CREDITS) 
+  : 15;
+
 // ----------------------------------------------------
 // NEW GUEST CREDIT ROUTE
 // ----------------------------------------------------
@@ -548,21 +553,50 @@ app.get('/api/guest/:deviceId/credits', async (req, res) => {
   try {
     let user = await User.findOne({ id: deviceId });
     if (!user) {
-      // Create user if they don't exist in Mongo yet
+      // Create user if they don't exist in Mongo yet with dynamic initial credits
       user = new User({
         id: deviceId,
         plan: 'Free',
-        credit: 0,
+        credit: GUEST_WELCOME_CREDITS,
         name: 'Guest User',
         referralCode: generateReferralCode()
       });
       await user.save();
+      console.log(`[SERVER] Created new guest user ${deviceId} with ${GUEST_WELCOME_CREDITS} initial credits`);
     }
-    res.json({ success: true, credit: user.credit });
+    res.json({ 
+      success: true, 
+      credit: user.credit, 
+      guestWelcomeCredits: GUEST_WELCOME_CREDITS 
+    });
   } catch (error) {
     console.error('Failed to get guest credits:', error);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+// Admin endpoint to adjust Guest Welcome Credits dynamically on server
+app.get('/api/admin/guest-welcome-credits', (req, res) => {
+  res.json({ success: true, guestWelcomeCredits: GUEST_WELCOME_CREDITS });
+});
+
+app.post('/api/admin/guest-welcome-credits', async (req, res) => {
+  const { credits, updateExisting } = req.body;
+  if (credits !== undefined && !isNaN(Number(credits))) {
+    GUEST_WELCOME_CREDITS = Number(credits);
+    console.log(`[ADMIN] Updated GUEST_WELCOME_CREDITS to: ${GUEST_WELCOME_CREDITS}`);
+    
+    if (updateExisting) {
+      try {
+        const result = await User.updateMany({ name: 'Guest User' }, { $set: { credit: GUEST_WELCOME_CREDITS } });
+        console.log(`[ADMIN] Updated ${result.modifiedCount} existing guest user accounts to ${GUEST_WELCOME_CREDITS} credits.`);
+      } catch (err) {
+        console.error('Admin update existing guest accounts error:', err);
+      }
+    }
+    return res.json({ success: true, guestWelcomeCredits: GUEST_WELCOME_CREDITS });
+  }
+  res.status(400).json({ error: 'Invalid credits value' });
 });
 
 // ----------------------------------------------------
@@ -1749,8 +1783,9 @@ app.post('/purchase/degrade-to-free', async (req, res) => {
 // App configuration & update checker endpoint
 app.get('/api/app-config', (req, res) => {
   res.json({
-    latestVersion: '2.1.8',
+    latestVersion: '2.3.0',
     minVersion: '2.0.1',
+    guestWelcomeCredits: GUEST_WELCOME_CREDITS,
     trackViewUrl: 'https://apps.apple.com/app/resumeok-ai-resume-builder/id6783382482',
     googleClientId: process.env.GOOGLE_CLIENT_ID || ''
   });
