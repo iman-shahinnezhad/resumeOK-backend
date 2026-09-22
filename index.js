@@ -1013,7 +1013,7 @@ app.post('/api/payment/confirm-mock-payment', async (req, res) => {
 // ----------------------------------------------------
 
 // 3. User Info / Secure Session validation Route
-app.get('/auth/me', async (req, res) => {
+app.get(['/auth/me', '/api/auth/me'], async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized' });
