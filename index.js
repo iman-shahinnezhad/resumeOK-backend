@@ -349,6 +349,7 @@ async function cleanDatabaseDefaults() {
 if (process.env.MONGO_URI) {
   mongoose.connection.once('open', () => {
     cleanDatabaseDefaults();
+    if (typeof seedAppleTestUser === 'function') seedAppleTestUser();
   });
 }
 
@@ -498,6 +499,40 @@ app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) =>
     });
   } catch (err) {
     console.error('Error saving user profile:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- ACCOUNT DELETION ENDPOINT (Apple App Store Guideline 5.1.1(v) Compliance) ---
+app.delete(['/api/user/:userId', '/api/user/account'], async (req, res) => {
+  try {
+    let userId = req.params.userId || req.body?.userId;
+
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.id) userId = decoded.id;
+      } catch (e) {}
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required for account deletion' });
+    }
+
+    // Delete user document & associated jobs
+    await User.findOneAndDelete({ 
+      $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] 
+    });
+    await UserJob.deleteMany({ userId });
+
+    console.log(`[Account Deletion] Successfully deleted user account & data for userId: ${userId}`);
+    return res.json({
+      success: true,
+      message: 'Account deleted permanently.'
+    });
+  } catch (err) {
+    console.error('Error deleting user account:', err);
     return res.status(500).json({ error: String(err) });
   }
 });
@@ -721,6 +756,39 @@ const verifyPassword = (password, storedPassword) => {
   const checkHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
   return hash === checkHash;
 };
+
+async function seedAppleTestUser() {
+  try {
+    const email = 'apple-reviewer@applydesk.io';
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = new User({
+        id: 'user_apple_reviewer_2026',
+        name: 'Apple Reviewer',
+        email,
+        password: hashPassword('AppleTest2026!'),
+        plan: 'Pro',
+        credit: 500,
+        hasCompletedOnboarding: true,
+        profile: {
+          firstName: 'Apple',
+          lastName: 'Reviewer',
+          jobTitle: 'iOS Software Engineer',
+          email: 'apple-reviewer@applydesk.io',
+          roles: ['Software Engineer'],
+          skills: ['Swift', 'React Native', 'iOS', 'TypeScript'],
+          experience: '5+ years'
+        },
+        referralCode: 'APPLE2026'
+      });
+      await user.save();
+      console.log('✅ Apple Reviewer test account seeded (apple-reviewer@applydesk.io / AppleTest2026!)');
+    }
+  } catch (e) {
+    console.error('Apple test user seed error:', e);
+  }
+}
+
 // 1. Email Register Route
 app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
