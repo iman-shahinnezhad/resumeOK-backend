@@ -2089,14 +2089,77 @@ app.get('/api/user-jobs/:userId', async (req, res) => {
   }
 });
 
+// --- ADD NEW PUBLIC JOB TO DB (FOR ALL USERS) ---
+app.post(['/api/jobs/add', '/api/jobs'], async (req, res) => {
+  try {
+    const jobData = req.body || {};
+    const title = jobData.title || jobData.jobTitle;
+    const company = jobData.companyName || jobData.company;
+    const location = jobData.location || 'Remote';
+    const applicationUrl = jobData.url || jobData.applicationUrl || jobData.link || '';
+    const description = jobData.description || `${title} position at ${company}`;
+    const provider = jobData.provider || 'extension';
+
+    if (!title || !company) {
+      return res.status(400).json({ error: 'Title and company are required' });
+    }
+
+    const jobId = jobData.jobId || `ext_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const isRemote = (location || '').toLowerCase().includes('remote');
+
+    let dbJob = await DbJob.findOne({
+      $or: [
+        { jobId: String(jobId) },
+        { applicationUrl: applicationUrl ? applicationUrl : 'NON_EXISTENT_URL' }
+      ]
+    });
+
+    if (!dbJob) {
+      dbJob = new DbJob({
+        jobId: String(jobId),
+        provider,
+        company: company.toUpperCase().trim(),
+        title: title.trim(),
+        description: description.trim(),
+        location: typeof location === 'object' ? (location?.name || 'Remote') : location,
+        remote: isRemote,
+        applicationUrl,
+        canApplyDirectly: true,
+        isExpired: false,
+        postedAt: new Date(),
+        createdAt: new Date()
+      });
+      await dbJob.save();
+      CacheService.clear();
+      console.log(`[PUBLIC JOB ADDED] Created new DbJob: "${title}" at "${company}" for all users`);
+    } else {
+      dbJob.lastSeenAt = new Date();
+      if (description && (!dbJob.description || dbJob.description.length < description.length)) {
+        dbJob.description = description;
+      }
+      await dbJob.save();
+    }
+
+    return res.json({ success: true, message: 'Job saved to ApplyDesk database for all users', job: dbJob });
+  } catch (err) {
+    console.error('Error adding job to database:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 // 2. POST update user applied or skipped job
 app.post('/api/user-jobs/:userId', async (req, res) => {
   try {
-    const { userId } = req.params;
+    let { userId } = req.params;
     const { type, jobId, jobData } = req.body;
 
     if (!type || !jobId) {
       return res.status(400).json({ error: 'type (applied|skipped|rejected) and jobId are required' });
+    }
+
+    const userDoc = await findUserByIdentifier(userId, req.headers.authorization);
+    if (userDoc) {
+      userId = userDoc.id || userDoc._id || userId;
     }
 
     let doc = await UserJob.findOne({ userId });
@@ -2104,23 +2167,28 @@ app.post('/api/user-jobs/:userId', async (req, res) => {
       doc = new UserJob({ userId, appliedJobs: [], skippedJobs: [], rejectedJobs: [] });
     }
 
-    // Check if the job exists in DbJob. If not, auto-create a lazy ref so it is preserved in GET API
-    const existingDbJob = await DbJob.findOne({ jobId: String(jobId) });
+    // Check if the job exists in DbJob. If not, auto-create a lazy ref so it is preserved in GET API for ALL users
+    let existingDbJob = await DbJob.findOne({ jobId: String(jobId) });
     if (!existingDbJob && jobData) {
       try {
-        const newDbJob = new DbJob({
+        const isRemote = (jobData.location || '').toLowerCase().includes('remote');
+        existingDbJob = new DbJob({
           jobId: String(jobId),
-          provider: jobData.provider || 'greenhouse',
-          company: jobData.companyName || jobData.company || 'Company',
+          provider: jobData.provider || 'extension',
+          company: (jobData.companyName || jobData.company || 'Company').toUpperCase().trim(),
           title: jobData.title || 'Job Title',
-          description: jobData.description || '',
+          description: jobData.description || `${jobData.title} position at ${jobData.companyName || jobData.company || 'Company'}`,
           location: typeof jobData.location === 'object' ? (jobData.location?.name || 'Remote') : (jobData.location || 'Remote'),
+          remote: isRemote,
           applicationUrl: jobData.url || jobData.applicationUrl || '',
           canApplyDirectly: true,
-          isExpired: false
+          isExpired: false,
+          postedAt: new Date(),
+          createdAt: new Date()
         });
-        await newDbJob.save();
-        console.log(`[SERVER USER-JOBS] Auto-created DbJob record for jobId: ${jobId} during ${type} sync`);
+        await existingDbJob.save();
+        CacheService.clear(); // Clear cache so the new job immediately appears in GET /api/jobs for ALL users!
+        console.log(`[SERVER USER-JOBS] Auto-created public DbJob record for jobId: ${jobId} (${jobData.title}) during ${type} sync`);
       } catch (dbErr) {
         console.error(`[SERVER USER-JOBS] Failed to auto-create DbJob for jobId: ${jobId}`, dbErr.message);
       }
@@ -2143,11 +2211,10 @@ app.post('/api/user-jobs/:userId', async (req, res) => {
 
     doc.updatedAt = new Date();
     await doc.save();
-
-    res.json({ success: true });
+    return res.json({ success: true, message: 'User job status updated and public DbJob preserved' });
   } catch (err) {
-    console.error('Error updating user job status:', err);
-    res.status(500).json({ error: 'Failed to update user job status' });
+    console.error('Error saving user job:', err);
+    return res.status(500).json({ error: String(err) });
   }
 });
 
