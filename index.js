@@ -89,7 +89,7 @@ async function ensureUploadDirs() {
     await fs.mkdir(uploadsDir, { recursive: true });
     await fs.mkdir(resumesDir, { recursive: true });
     await fs.mkdir(coverLettersDir, { recursive: true });
-  } catch (e) {}
+  } catch (e) { }
 }
 ensureUploadDirs();
 
@@ -112,7 +112,7 @@ async function cleanupExpiredPdfs() {
           console.log(`[Auto-Cleanup] Deleted 30-day expired PDF file: ${file}`);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 }
 // Run cleanup on boot and every 24 hours
@@ -145,7 +145,7 @@ app.post('/api/upload-pdf', async (req, res) => {
     // If userId provided, save record to MongoDB users collection
     if (userId) {
       try {
-        let userDoc = await User.findOne({ id: userId });
+        let userDoc = await findUserByIdentifier(userId, req.headers.authorization);
         if (!userDoc) {
           userDoc = new User({
             id: userId,
@@ -158,7 +158,7 @@ app.post('/api/upload-pdf', async (req, res) => {
 
         if (isCoverLetter) {
           if (!userDoc.coverLetters) userDoc.coverLetters = [];
-          userDoc.coverLetters.push({
+          userDoc.coverLetters.unshift({
             id: `cl_${Date.now()}`,
             fileName: safeName,
             url: publicUrl,
@@ -168,10 +168,9 @@ app.post('/api/upload-pdf', async (req, res) => {
             jobTitle: jobTitle || '',
             createdAt: new Date()
           });
-          console.log(`[PDF UPLOAD] Saved cover letter for user ${userId} (Job: ${companyName} - ${jobTitle}) to MongoDB`);
         } else {
           if (!userDoc.resumes) userDoc.resumes = [];
-          userDoc.resumes.push({
+          userDoc.resumes.unshift({
             id: `resume_${Date.now()}`,
             fileName: safeName,
             url: publicUrl,
@@ -181,7 +180,9 @@ app.post('/api/upload-pdf', async (req, res) => {
             isTailored: Boolean(jobId || companyName || jobTitle),
             createdAt: new Date()
           });
-          console.log(`[PDF UPLOAD] Saved resume for user ${userId} (Job: ${companyName} - ${jobTitle}) to MongoDB`);
+          if (!userDoc.profile) userDoc.profile = {};
+          userDoc.profile.resumeFileName = safeName;
+          userDoc.markModified('profile');
         }
         await userDoc.save();
       } catch (e) {
@@ -205,7 +206,7 @@ app.post('/api/upload-pdf', async (req, res) => {
 app.get('/api/user/:userId/documents', async (req, res) => {
   try {
     const { userId } = req.params;
-    const userDoc = await User.findOne({ id: userId });
+    const userDoc = await findUserByIdentifier(userId, req.headers.authorization);
     if (!userDoc) {
       return res.json({ success: true, resumes: [], coverLetters: [] });
     }
@@ -216,6 +217,35 @@ app.get('/api/user/:userId/documents', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching user documents:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- POST USER RESUME TO MONGODB ---
+app.post('/api/user/:userId/resume', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { fileName, fileData, url } = req.body;
+    let userDoc = await findUserByIdentifier(userId, req.headers.authorization);
+    if (!userDoc) {
+      userDoc = new User({ id: userId, name: 'Candidate User' });
+    }
+    const safeName = fileName || 'Uploaded_Resume.pdf';
+    const newResume = {
+      id: 'res_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
+      fileName: safeName,
+      url: url || fileData || '',
+      createdAt: new Date()
+    };
+    if (!userDoc.resumes) userDoc.resumes = [];
+    userDoc.resumes.unshift(newResume);
+    if (!userDoc.profile) userDoc.profile = {};
+    userDoc.profile.resumeFileName = safeName;
+    userDoc.markModified('profile');
+    await userDoc.save();
+    return res.json({ success: true, resume: newResume, resumes: userDoc.resumes });
+  } catch (err) {
+    console.error('Error saving user resume:', err);
     return res.status(500).json({ error: String(err) });
   }
 });
@@ -307,6 +337,32 @@ const generateReferralCode = () => {
 
 const User = mongoose.model('User', userSchema);
 
+async function findUserByIdentifier(userId, authHeader) {
+  let targetId = userId;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded) {
+        if (decoded.id) targetId = decoded.id;
+        else if (decoded.email) targetId = decoded.email;
+      }
+    } catch (e) {}
+  }
+  if (!targetId || targetId === 'default_user' || targetId === 'me') {
+    return null;
+  }
+  return await User.findOne({
+    $or: [
+      { id: targetId },
+      { _id: targetId },
+      { appleId: targetId },
+      { googleId: targetId },
+      { email: targetId }
+    ]
+  });
+}
+
 // Database Cleanup helper to clean up user profile records generically
 async function cleanDatabaseDefaults() {
   try {
@@ -341,7 +397,7 @@ async function cleanDatabaseDefaults() {
       }
     }
     console.log('MongoDB: Profile records verified.');
-  } catch(e) {
+  } catch (e) {
     console.error('Mongo profile cleanup error:', e);
   }
 }
@@ -357,13 +413,13 @@ if (process.env.MONGO_URI) {
 app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
   try {
     let userId = req.params.userId || req.query.userId;
-    
+
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.id) userId = decoded.id;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     let userDoc = null;
@@ -464,7 +520,7 @@ app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) =>
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.id) userId = decoded.id;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     let userDoc = null;
@@ -513,7 +569,7 @@ app.delete(['/api/user/:userId', '/api/user/account'], async (req, res) => {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
         if (decoded && decoded.id) userId = decoded.id;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!userId) {
@@ -521,8 +577,8 @@ app.delete(['/api/user/:userId', '/api/user/account'], async (req, res) => {
     }
 
     // Delete user document & associated jobs
-    await User.findOneAndDelete({ 
-      $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] 
+    await User.findOneAndDelete({
+      $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }]
     });
     await UserJob.deleteMany({ userId });
 
@@ -576,8 +632,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // Configurable Guest Welcome Credits (Defaults to 15, controllable via ENV or admin endpoint)
-let GUEST_WELCOME_CREDITS = process.env.GUEST_WELCOME_CREDITS !== undefined 
-  ? Number(process.env.GUEST_WELCOME_CREDITS) 
+let GUEST_WELCOME_CREDITS = process.env.GUEST_WELCOME_CREDITS !== undefined
+  ? Number(process.env.GUEST_WELCOME_CREDITS)
   : 15;
 
 // ----------------------------------------------------
@@ -599,10 +655,10 @@ app.get('/api/guest/:deviceId/credits', async (req, res) => {
       await user.save();
       console.log(`[SERVER] Created new guest user ${deviceId} with ${GUEST_WELCOME_CREDITS} initial credits`);
     }
-    res.json({ 
-      success: true, 
-      credit: user.credit, 
-      guestWelcomeCredits: GUEST_WELCOME_CREDITS 
+    res.json({
+      success: true,
+      credit: user.credit,
+      guestWelcomeCredits: GUEST_WELCOME_CREDITS
     });
   } catch (error) {
     console.error('Failed to get guest credits:', error);
@@ -620,7 +676,7 @@ app.post('/api/admin/guest-welcome-credits', async (req, res) => {
   if (credits !== undefined && !isNaN(Number(credits))) {
     GUEST_WELCOME_CREDITS = Number(credits);
     console.log(`[ADMIN] Updated GUEST_WELCOME_CREDITS to: ${GUEST_WELCOME_CREDITS}`);
-    
+
     if (updateExisting) {
       try {
         const result = await User.updateMany({ name: 'Guest User' }, { $set: { credit: GUEST_WELCOME_CREDITS } });
@@ -898,7 +954,7 @@ app.post('/api/auth/apple', async (req, res) => {
   try {
     // Verify the identity token from Apple
     const decoded = await verifyAppleIdToken(identityToken);
-    
+
     const appleId = decoded.sub; // Unique Apple User ID
     const email = decoded.email;
 
@@ -919,7 +975,7 @@ app.post('/api/auth/apple', async (req, res) => {
       if (name && (name.firstName || name.lastName)) {
         fullName = `${name.firstName || ''} ${name.lastName || ''}`.trim();
       }
-      
+
       user = new User({
         id: 'apple_' + appleId,
         name: fullName,
@@ -1272,27 +1328,27 @@ function rateLimiter(limit = 100, windowMs = 60 * 1000) {
   return (req, res, next) => {
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const now = Date.now();
-    
+
     let record = rateLimitCache.get(ip);
     if (!record) {
       record = { count: 0, resetTime: now + windowMs };
       rateLimitCache.set(ip, record);
     }
-    
+
     if (now > record.resetTime) {
       record.count = 0;
       record.resetTime = now + windowMs;
     }
-    
+
     record.count++;
-    
+
     if (record.count > limit) {
-      return res.status(429).json({ 
-        success: false, 
-        error: 'Too many requests. Please try again later.' 
+      return res.status(429).json({
+        success: false,
+        error: 'Too many requests. Please try again later.'
       });
     }
-    
+
     next();
   };
 }
@@ -1436,33 +1492,33 @@ app.get('/api/jobs', searchRateLimiter, async (req, res) => {
       });
     }
 
-function extractSalaryFromText(text) {
-  if (!text || typeof text !== 'string') return null;
+    function extractSalaryFromText(text) {
+      if (!text || typeof text !== 'string') return null;
 
-  const labelMatch = text.match(/(?:salary|compensation|base pay|pay range|remuneration|rate)\s*(?:range|rate)?\s*[:\-\=]?\s*([\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?|[\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?)/i);
-  if (labelMatch && labelMatch[1]) {
-    return labelMatch[1].trim();
-  }
+      const labelMatch = text.match(/(?:salary|compensation|base pay|pay range|remuneration|rate)\s*(?:range|rate)?\s*[:\-\=]?\s*([\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?|[\$€£¥]\s*\d[\d,\.]*\s*(?:[kK]|thousand)?(?:\s*\/(?:yr|year|hr|hour|mo|month))?)/i);
+      if (labelMatch && labelMatch[1]) {
+        return labelMatch[1].trim();
+      }
 
-  const rangeMatch = text.match(/([\$€£¥]\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?(?:\s*(?:USD|EUR|GBP|CAD|AUD))?(?:\s*\/(?:yr|year|hr|hour|mo|month|annum))?)/i);
-  if (rangeMatch && rangeMatch[1]) {
-    return rangeMatch[1].trim();
-  }
+      const rangeMatch = text.match(/([\$€£¥]\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:[kK])?(?:\s*(?:USD|EUR|GBP|CAD|AUD))?(?:\s*\/(?:yr|year|hr|hour|mo|month|annum))?)/i);
+      if (rangeMatch && rangeMatch[1]) {
+        return rangeMatch[1].trim();
+      }
 
-  const shortRangeMatch = text.match(/([\$€£¥]?\s*\d{2,3}\s*k\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}\s*k(?:\s*(?:USD|EUR|GBP))?)/i);
-  if (shortRangeMatch && shortRangeMatch[1]) {
-    return shortRangeMatch[1].trim();
-  }
+      const shortRangeMatch = text.match(/([\$€£¥]?\s*\d{2,3}\s*k\s*(?:[\-\–\—]|to)\s*[\$€£¥]?\s*\d{2,3}\s*k(?:\s*(?:USD|EUR|GBP))?)/i);
+      if (shortRangeMatch && shortRangeMatch[1]) {
+        return shortRangeMatch[1].trim();
+      }
 
-  return null;
-}
+      return null;
+    }
 
     // Map database jobs to legacy schema expected by client app
     const legacyJobs = jobs.map(job => {
-      const content = job.description + 
+      const content = job.description +
         (job.requirements ? "\n\n" + job.requirements : "");
       const extractedSalary = job.salary || extractSalaryFromText(content);
-        
+
       return {
         id: job.jobId,
         title: job.title,
@@ -1483,12 +1539,12 @@ function extractSalaryFromText(text) {
       };
     });
 
-    const responseData = { 
-      success: true, 
+    const responseData = {
+      success: true,
       count: legacyJobs.length,
       page: pageNum,
       limit: limitNum,
-      jobs: legacyJobs 
+      jobs: legacyJobs
     };
 
     // Cache responses for 60 seconds
@@ -1551,7 +1607,7 @@ app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async
           sourceType: 'general'
         });
         await newDbJob.save();
-      } catch (dbErr) {}
+      } catch (dbErr) { }
     }
 
     if (!job) {
@@ -1607,7 +1663,7 @@ app.post('/api/jobs/apply', applyRateLimiter, upload.single('resume'), async (re
   try {
     const provider = ProviderRegistry.get(sourceType);
     const candidate = { firstName, lastName, email, phone, jobBoardKey };
-    
+
     const result = await provider.apply(jobId, companySlug, candidate, resumeFile);
     res.json(result);
   } catch (error) {
@@ -1894,7 +1950,7 @@ app.post('/api/ai/generateContent', secureAiRateLimiter, async (req, res) => {
 
     const responseStatus = response.status;
     const data = await response.json();
-    
+
     res.status(responseStatus).json(data);
   } catch (error) {
     console.error('Error proxying Gemini API request:', error);
