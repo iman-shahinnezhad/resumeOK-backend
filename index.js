@@ -203,9 +203,9 @@ app.post('/api/upload-pdf', async (req, res) => {
 });
 
 // --- GET USER RESUMES AND COVER LETTERS FROM MONGODB ---
-app.get('/api/user/:userId/documents', async (req, res) => {
+app.get(['/api/user/:userId/documents', '/api/user/documents', '/api/user/me/documents'], async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = req.params.userId || req.query.userId || 'me';
     const userDoc = await findUserByIdentifier(userId, req.headers.authorization);
     if (!userDoc) {
       return res.json({ success: true, resumes: [], coverLetters: [] });
@@ -349,18 +349,20 @@ async function findUserByIdentifier(userId, authHeader) {
       }
     } catch (e) {}
   }
-  if (!targetId || targetId === 'default_user' || targetId === 'me') {
+  if (!targetId || targetId === 'default_user' || targetId === 'me' || targetId === 'profile' || targetId === 'documents') {
     return null;
   }
-  return await User.findOne({
-    $or: [
-      { id: targetId },
-      { _id: targetId },
-      { appleId: targetId },
-      { googleId: targetId },
-      { email: targetId }
-    ]
-  });
+  const isObjId = mongoose.Types.ObjectId.isValid(targetId);
+  const orConditions = [
+    { id: targetId },
+    { appleId: targetId },
+    { googleId: targetId },
+    { email: targetId }
+  ];
+  if (isObjId) {
+    orConditions.push({ _id: targetId });
+  }
+  return await User.findOne({ $or: orConditions });
 }
 
 // Database Cleanup helper to clean up user profile records generically
@@ -410,22 +412,10 @@ if (process.env.MONGO_URI) {
 }
 
 // --- USER PROFILE ENDPOINTS (SYNC BETWEEN WEB, APP & EXTENSION) ---
-app.get(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
+app.get(['/api/user/:userId/profile', '/api/user/profile', '/api/user/me/profile'], async (req, res) => {
   try {
-    let userId = req.params.userId || req.query.userId;
-
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-      try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.id) userId = decoded.id;
-      } catch (e) { }
-    }
-
-    let userDoc = null;
-    if (userId && userId !== 'default_user') {
-      userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
-    }
+    let userId = req.params.userId || req.query.userId || 'me';
+    let userDoc = await findUserByIdentifier(userId, req.headers.authorization);
 
     const userProfile = userDoc ? (userDoc.profile || {}) : {};
     if (userDoc && !userProfile.firstName && userDoc.name) {
@@ -509,28 +499,18 @@ app.get(['/api/admin/users.csv', '/api/admin/export-users-csv'], async (req, res
   }
 });
 
-app.post(['/api/user/:userId/profile', '/api/user/profile'], async (req, res) => {
+app.post(['/api/user/:userId/profile', '/api/user/profile', '/api/user/me/profile'], async (req, res) => {
   try {
-    let userId = req.params.userId || req.body.userId;
+    let userId = req.params.userId || req.body.userId || 'me';
     const newProfileData = req.body.profile || req.body;
     const explicitCompleted = req.body.hasCompletedOnboarding !== undefined ? req.body.hasCompletedOnboarding : true;
 
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-      try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded && decoded.id) userId = decoded.id;
-      } catch (e) { }
-    }
-
-    let userDoc = null;
-    if (userId && userId !== 'default_user') {
-      userDoc = await User.findOne({ $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }] });
-    }
+    let userDoc = await findUserByIdentifier(userId, req.headers.authorization);
 
     if (!userDoc) {
+      const cleanUserId = (userId && userId !== 'me' && userId !== 'profile') ? userId : ('user_' + crypto.randomBytes(8).toString('hex'));
       userDoc = new User({
-        id: userId || ('user_' + crypto.randomBytes(8).toString('hex')),
+        id: cleanUserId,
         name: `${newProfileData?.firstName || ''} ${newProfileData?.lastName || ''}`.trim() || 'User',
         email: newProfileData?.email,
         profile: newProfileData || {},
@@ -2089,16 +2069,314 @@ app.get('/api/user-jobs/:userId', async (req, res) => {
   }
 });
 
+// --- WORKDAY & ATS SERVER-SIDE PARSER & ENRICHER ---
+function parseWorkdayUrlServer(inputUrl) {
+  if (!inputUrl) return null;
+  let url;
+  try {
+    url = new URL(inputUrl);
+  } catch {
+    return null;
+  }
+  const hostname = url.hostname;
+  const match = hostname.match(/^([a-z0-9-]+)\.(wd[0-9]+)\.myworkdayjobs\.com$/i);
+
+  let tenant = '';
+  let shard = 'wd1';
+  if (match) {
+    tenant = match[1];
+    shard = match[2];
+  } else if (hostname.includes('myworkdayjobs.com') || hostname.includes('workday.com')) {
+    tenant = hostname.split('.')[0].replace(/-.*/, '');
+  } else {
+    return null;
+  }
+
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return null;
+
+  let locale = 'en-US';
+  let siteIndex = 0;
+
+  if (segments[0].match(/^[a-z]{2}-[A-Z]{2}$/)) {
+    locale = segments[0];
+    siteIndex = 1;
+  }
+
+  const site = segments[siteIndex];
+  if (!site) return null;
+
+  let remainingSegments = segments.slice(siteIndex + 1);
+  const applyIdx = remainingSegments.findIndex(s => s.toLowerCase() === 'apply');
+  if (applyIdx !== -1) {
+    remainingSegments = remainingSegments.slice(0, applyIdx);
+  }
+
+  if (remainingSegments.length === 0) return null;
+
+  const externalPath = '/' + remainingSegments.join('/');
+
+  return {
+    origin: url.origin,
+    tenant,
+    shard,
+    site,
+    locale,
+    externalPath
+  };
+}
+
+async function fetchWorkdayJobServer(inputUrl) {
+  const parsed = parseWorkdayUrlServer(inputUrl);
+  if (!parsed) return null;
+
+  const { origin, tenant, site, locale, externalPath } = parsed;
+  const apiUrl = `${origin}/wday/cxs/${tenant}/${site}${externalPath}`;
+
+  try {
+    const res = await fetch(apiUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Language': locale,
+        'User-Agent': 'Mozilla/5.0 (compatible; ApplyDesk/1.0)'
+      }
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const info = data?.jobPostingInfo || data?.jobPosting || data;
+    if (!info) return null;
+
+    const cleanText = (val) => {
+      if (val === undefined || val === null) return null;
+      const text = String(val).replace(/\s+/g, ' ').trim();
+      return text || null;
+    };
+
+    const htmlToText = (html) => {
+      if (!html) return null;
+      return html.replace(/<[^>]*>/g, ' ').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    };
+
+    const title = cleanText(info.title || data.title);
+    const jobDescriptionHtml = info.jobDescription || info.jobDescriptionHtml || null;
+    const description = htmlToText(jobDescriptionHtml) || jobDescriptionHtml;
+
+    const locations = [];
+    const primaryLoc = cleanText(info.jobRequisitionLocation?.descriptor || info.location?.descriptor || info.location);
+    if (primaryLoc) locations.push(primaryLoc);
+
+    if (Array.isArray(info.additionalLocations)) {
+      for (const loc of info.additionalLocations) {
+        const v = cleanText(loc?.descriptor || loc?.location || loc);
+        if (v && !locations.includes(v)) locations.push(v);
+      }
+    }
+
+    const location = locations[0] || 'Remote';
+    const requisitionId = cleanText(info.jobReqId || data.jobReqId);
+    const company = cleanText(
+      info.hiringOrganization?.name ||
+      info.hiringOrganization?.descriptor ||
+      data.hiringOrganization?.name ||
+      tenant.toUpperCase()
+    );
+
+    const employmentType = cleanText(info.employmentType || info.timeType);
+
+    return {
+      provider: 'workday',
+      title: title || 'Position Applied',
+      company: company || tenant.toUpperCase(),
+      location: location || 'Remote',
+      locations,
+      description: description || '',
+      employmentType: employmentType || 'Full-time',
+      requisitionId,
+      applicationUrl: info.externalUrl || inputUrl,
+      raw: data
+    };
+  } catch(e) {
+    console.warn('[Server Workday Fetch Warning]', e.message);
+    return null;
+  }
+}
+
+async function fetchGreenhouseJobServer(inputUrl) {
+  try {
+    const u = new URL(inputUrl);
+    if (!u.hostname.includes('greenhouse.io')) return null;
+    const parts = u.pathname.split('/').filter(Boolean);
+    let board = '';
+    let jobId = '';
+    if (parts[0] === 'embed' || parts[0] === 'jobs') {
+      board = u.searchParams.get('for') || parts[1];
+      jobId = u.searchParams.get('id') || parts[2] || parts[1];
+    } else {
+      board = parts[0];
+      jobId = parts[parts.length - 1];
+    }
+    if (!board || !jobId) return null;
+
+    const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${jobId}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    const title = data.title;
+    const company = data.company_name || board.toUpperCase();
+    const location = data.location?.name || 'Remote';
+    const description = (data.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
+    return {
+      provider: 'greenhouse',
+      title,
+      company,
+      location,
+      description,
+      applicationUrl: data.absolute_url || inputUrl
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+async function fetchLeverJobServer(inputUrl) {
+  try {
+    const u = new URL(inputUrl);
+    if (!u.hostname.includes('lever.co')) return null;
+    const parts = u.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    const company = parts[0];
+    const jobId = parts[1];
+
+    const res = await fetch(`https://api.lever.co/v0/postings/${company}/${jobId}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    const title = data.text;
+    const location = data.categories?.location || 'Remote';
+    const description = (data.descriptionPlain || data.content || '').replace(/\s+/g, ' ').trim();
+
+    return {
+      provider: 'lever',
+      title,
+      company: company.toUpperCase(),
+      location,
+      description,
+      applicationUrl: data.hostedUrl || inputUrl
+    };
+  } catch(e) {
+    return null;
+  }
+}
+
+async function fetchJobFromUrlServer(inputUrl) {
+  if (!inputUrl) return null;
+
+  if (inputUrl.includes('myworkdayjobs.com') || inputUrl.includes('workday.com')) {
+    const job = await fetchWorkdayJobServer(inputUrl);
+    if (job) return job;
+  }
+  if (inputUrl.includes('greenhouse.io')) {
+    const job = await fetchGreenhouseJobServer(inputUrl);
+    if (job) return job;
+  }
+  if (inputUrl.includes('lever.co')) {
+    const job = await fetchLeverJobServer(inputUrl);
+    if (job) return job;
+  }
+  return null;
+}
+
+// --- IMPORT JOB FROM ATS URL ENDPOINT ---
+app.post('/api/jobs/import-url', async (req, res) => {
+  try {
+    const { url, jobUrl } = req.body || {};
+    const targetUrl = url || jobUrl;
+
+    if (!targetUrl) {
+      return res.status(400).json({ error: 'URL parameter is required' });
+    }
+
+    const fetchedJob = await fetchJobFromUrlServer(targetUrl);
+    if (!fetchedJob) {
+      return res.status(404).json({ error: 'Could not extract job details from the provided ATS URL' });
+    }
+
+    const jobId = `ats_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const isRemote = (fetchedJob.location || '').toLowerCase().includes('remote');
+
+    let dbJob = await DbJob.findOne({
+      $or: [
+        { applicationUrl: fetchedJob.applicationUrl || targetUrl }
+      ]
+    });
+
+    if (!dbJob) {
+      dbJob = new DbJob({
+        jobId,
+        provider: fetchedJob.provider || 'ats',
+        company: fetchedJob.company.toUpperCase().trim(),
+        title: fetchedJob.title.trim(),
+        description: fetchedJob.description.trim(),
+        location: fetchedJob.location,
+        remote: isRemote,
+        applicationUrl: fetchedJob.applicationUrl || targetUrl,
+        canApplyDirectly: true,
+        isExpired: false,
+        postedAt: new Date(),
+        createdAt: new Date()
+      });
+      await dbJob.save();
+      CacheService.clear();
+    }
+
+    return res.json({
+      success: true,
+      message: 'Job extracted successfully',
+      job: {
+        id: dbJob.jobId,
+        title: dbJob.title,
+        company: dbJob.company,
+        location: dbJob.location,
+        description: dbJob.description,
+        employmentType: fetchedJob.employmentType || 'Full-time',
+        url: dbJob.applicationUrl,
+        requisitionId: fetchedJob.requisitionId || null,
+        provider: fetchedJob.provider
+      }
+    });
+  } catch (err) {
+    console.error('Error importing job from URL:', err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- ADD NEW PUBLIC JOB TO DB (FOR ALL USERS) ---
 app.post(['/api/jobs/add', '/api/jobs'], async (req, res) => {
   try {
     const jobData = req.body || {};
-    const title = jobData.title || jobData.jobTitle;
-    const company = jobData.companyName || jobData.company;
-    const location = jobData.location || 'Remote';
+    let title = jobData.title || jobData.jobTitle;
+    let company = jobData.companyName || jobData.company;
+    let location = jobData.location || 'Remote';
     const applicationUrl = jobData.url || jobData.applicationUrl || jobData.link || '';
-    const description = jobData.description || `${title} position at ${company}`;
-    const provider = jobData.provider || 'extension';
+    let description = jobData.description || '';
+    let provider = jobData.provider || 'extension';
+
+    // Auto-enrich job from ATS API if url is supplied and description is short/missing
+    if (applicationUrl && (!description || description.length < 50 || !title || !company)) {
+      const enriched = await fetchJobFromUrlServer(applicationUrl);
+      if (enriched) {
+        if (!title || title === 'Position Applied') title = enriched.title;
+        if (!company || company === 'Company') company = enriched.company;
+        if (!location || location === 'Remote') location = enriched.location;
+        if (enriched.description) description = enriched.description;
+        if (enriched.provider) provider = enriched.provider;
+      }
+    }
+
+    if (!description) description = `${title || 'Position'} at ${company || 'Company'}`;
 
     if (!title || !company) {
       return res.status(400).json({ error: 'Title and company are required' });
