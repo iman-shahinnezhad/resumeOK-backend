@@ -2249,22 +2249,36 @@ async function fetchLeverJobServer(inputUrl) {
     if (parts.length < 2) return null;
     const company = parts[0];
     const jobId = parts[1];
+    if (!company || !jobId) return null;
 
     const res = await fetch(`https://api.lever.co/v0/postings/${company}/${jobId}`);
     if (!res.ok) return null;
     const data = await res.json();
 
-    const title = data.text;
-    const location = data.categories?.location || 'Remote';
-    const description = (data.descriptionPlain || data.content || '').replace(/\s+/g, ' ').trim();
+    const title = data.text || data.title;
+    const location = data.categories?.location || (Array.isArray(data.categories?.allLocations) ? data.categories.allLocations.join(', ') : 'Remote');
+
+    let description = (data.descriptionPlain || data.descriptionBodyPlain || '').replace(/\s+/g, ' ').trim();
+    if (Array.isArray(data.lists) && data.lists.length > 0) {
+      const listTexts = data.lists.map(item => {
+        const heading = item.text ? item.text.trim() : '';
+        const bodyHtml = item.content || '';
+        const bodyText = bodyHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        return heading ? `${heading}\n${bodyText}` : bodyText;
+      }).filter(Boolean);
+      description += '\n\n' + listTexts.join('\n\n');
+    }
+
+    const cleanCompany = (company || 'Company').toUpperCase();
+    const cleanUrl = data.hostedUrl || `https://jobs.lever.co/${company}/${jobId}`;
 
     return {
       provider: 'lever',
       title,
-      company: company.toUpperCase(),
+      company: cleanCompany,
       location,
       description,
-      applicationUrl: data.hostedUrl || inputUrl
+      applicationUrl: cleanUrl
     };
   } catch(e) {
     return null;
@@ -2360,18 +2374,21 @@ app.post(['/api/jobs/add', '/api/jobs'], async (req, res) => {
     let title = jobData.title || jobData.jobTitle;
     let company = jobData.companyName || jobData.company;
     let location = jobData.location || 'Remote';
-    const applicationUrl = jobData.url || jobData.applicationUrl || jobData.link || '';
+    let applicationUrl = jobData.url || jobData.applicationUrl || jobData.link || '';
     let description = jobData.description || '';
     let provider = jobData.provider || 'extension';
 
-    // Auto-enrich job from ATS API if url is supplied and description is short/missing
-    if (applicationUrl && (!description || description.length < 50 || !title || !company)) {
+    // Auto-enrich job from ATS API if url is supplied and description is short/form-text/missing
+    if (applicationUrl) {
       const enriched = await fetchJobFromUrlServer(applicationUrl);
-      if (enriched) {
-        if (!title || title === 'Position Applied') title = enriched.title;
+      if (enriched && enriched.description && enriched.description.length > 50) {
+        if (!title || title === 'Position Applied' || title.toLowerCase().includes('position')) title = enriched.title;
         if (!company || company === 'Company') company = enriched.company;
         if (!location || location === 'Remote') location = enriched.location;
-        if (enriched.description) description = enriched.description;
+        if (!description || description.includes('SUBMIT YOUR APPLICATION') || description.length < enriched.description.length) {
+          description = enriched.description;
+        }
+        if (enriched.applicationUrl) applicationUrl = enriched.applicationUrl;
         if (enriched.provider) provider = enriched.provider;
       }
     }
