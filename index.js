@@ -556,10 +556,19 @@ app.delete(['/api/user/:userId', '/api/user/account'], async (req, res) => {
       return res.status(400).json({ error: 'User ID is required for account deletion' });
     }
 
+    const mongoose = require('mongoose');
+    const queryOpts = [
+      { id: userId }, 
+      { appleId: userId }, 
+      { googleId: userId }, 
+      { email: userId }
+    ];
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      queryOpts.push({ _id: userId });
+    }
+
     // Delete user document & associated jobs
-    await User.findOneAndDelete({
-      $or: [{ id: userId }, { _id: userId }, { appleId: userId }, { googleId: userId }, { email: userId }]
-    });
+    await User.findOneAndDelete({ $or: queryOpts });
     await UserJob.deleteMany({ userId });
 
     console.log(`[Account Deletion] Successfully deleted user account & data for userId: ${userId}`);
@@ -1618,6 +1627,39 @@ app.post('/api/jobs/:jobId/match', aiRateLimiter, upload.single('resume'), async
     });
   } catch (error) {
     console.error('Error in job matching endpoint:', error);
+    return res.status(500).json({ success: false, error: 'Failed to complete AI matching analysis' });
+  }
+});
+
+// Generic AI match endpoint (used by extension)
+app.post('/api/ai/match', aiRateLimiter, async (req, res) => {
+  const { job, resumeText, resumeBase64 } = req.body || {};
+
+  if (!job || (!resumeText && (!resumeBase64 || resumeBase64.length < 20))) {
+    return res.status(400).json({ success: false, error: 'Missing job details or valid resume.' });
+  }
+
+  try {
+    const jobDetails = {
+      title: job.title || 'Job Position',
+      company: job.company || '',
+      url: job.url || '',
+      description: job.description || job.title,
+      requirements: job.requirements || ''
+    };
+
+    const matchResult = await AiMatchingService.matchResume(
+      jobDetails,
+      resumeText,
+      resumeBase64
+    );
+
+    return res.json({
+      success: true,
+      ...matchResult
+    });
+  } catch (error) {
+    console.error('Error in generic AI matching endpoint:', error);
     return res.status(500).json({ success: false, error: 'Failed to complete AI matching analysis' });
   }
 });

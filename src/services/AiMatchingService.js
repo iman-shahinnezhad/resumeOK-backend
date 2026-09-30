@@ -27,6 +27,8 @@ Rewrite and optimize the provided resume so it achieves the highest possible ATS
 
 [JOB DESCRIPTION]
 Title: ${job.title}
+Company: ${job.company || ''}
+URL: ${job.url || ''}
 Description: ${job.description}
 Requirements: ${job.requirements || ''}
 [END JOB DESCRIPTION]
