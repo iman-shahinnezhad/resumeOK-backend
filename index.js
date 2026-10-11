@@ -1138,8 +1138,11 @@ app.get(['/auth/me', '/api/auth/me'], async (req, res) => {
     // Verify token identity
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    // Fetch the REAL, secure credit balance from database
-    const user = await User.findOne({ id: decoded.id });
+    const isObjId = decoded.id && mongoose.Types.ObjectId.isValid(decoded.id);
+    const orConditions = [{ id: decoded.id }];
+    if (isObjId) orConditions.push({ _id: decoded.id });
+    if (decoded.email) orConditions.push({ email: decoded.email });
+    const user = await User.findOne({ $or: orConditions });
 
     if (!user) throw new Error('User not found in DB');
 
