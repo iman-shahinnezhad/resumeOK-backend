@@ -225,16 +225,32 @@ app.get(['/api/user/:userId/documents', '/api/user/documents', '/api/user/me/doc
 app.post('/api/user/:userId/resume', async (req, res) => {
   try {
     const { userId } = req.params;
-    const { fileName, fileData, url } = req.body;
+    const { fileName, fileData, url, fileSize, size } = req.body;
     let userDoc = await findUserByIdentifier(userId, req.headers.authorization);
     if (!userDoc) {
       userDoc = new User({ id: userId, name: 'Candidate User' });
     }
     const safeName = fileName || 'Uploaded_Resume.pdf';
+    let computedBytes = fileSize;
+    if (!computedBytes && (fileData || url)) {
+      const d = fileData || url;
+      const b64 = d.includes(',') ? d.split(',')[1] : d;
+      computedBytes = Math.round((b64.length * 3) / 4);
+    }
+    const formatBytes = (bytes) => {
+      if (!bytes || bytes <= 0) return 'PDF Document';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
     const newResume = {
       id: 'res_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
       fileName: safeName,
+      name: safeName,
       url: url || fileData || '',
+      fileData: url || fileData || '',
+      fileSize: computedBytes || 0,
+      size: size || formatBytes(computedBytes),
       createdAt: new Date()
     };
     if (!userDoc.resumes) userDoc.resumes = [];
@@ -284,7 +300,11 @@ const userSchema = new mongoose.Schema({
     {
       id: { type: String },
       fileName: { type: String },
+      name: { type: String },
       url: { type: String },
+      fileData: { type: String },
+      fileSize: { type: Number },
+      size: { type: String },
       jobId: { type: String },
       companyName: { type: String },
       jobTitle: { type: String },
